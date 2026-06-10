@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS OS v1.0</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── INIT GATE (unlocks audio context) ── -->
+  <div id="init-overlay">
+    <div class="scanlines"></div>
+    <div id="init-content">
+      <div id="init-logo">JARVIS</div>
+      <div id="init-sub">SYSTEM STANDBY</div>
+      <button id="btn-initialize">▸ CLICK TO INITIALIZE</button>
+      <div id="init-note">AUDIO + SENSORY SYSTEMS PENDING</div>
+    </div>
+  </div>
+
+  <!-- ── SCREEN 1: BOOT ── -->
+  <div id="screen-boot" class="screen">
+    <div class="scanlines"></div>
+    <div id="boot-container">
+      <div id="boot-logo">
+        <span class="boot-logo-text">J</span><span class="boot-logo-text">A</span><span class="boot-logo-text">R</span><span class="boot-logo-text">V</span><span class="boot-logo-text">I</span><span class="boot-logo-text">S</span>
+      </div>
+      <div id="boot-lines"></div>
+      <div id="boot-cursor">█</div>
+    </div>
+  </div>
+
+  <!-- ── SCREEN 2: AUTH ── -->
+  <div id="screen-auth" class="screen">
+    <div class="scanlines"></div>
+    <div class="auth-container panel">
+      <div class="panel-corner tl">┌</div>
+      <div class="panel-corner tr">┐</div>
+      <div class="panel-corner bl">└</div>
+      <div class="panel-corner br">┘</div>
+      <div class="panel-header">IDENTITY VERIFICATION</div>
+
+      <!-- Tab switcher -->
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tab-signin">SIGN IN</button>
+        <button class="auth-tab" id="tab-signup">SIGN UP</button>
+      </div>
+
+      <!-- SIGN IN form -->
+      <div id="form-signin">
+        <div class="auth-subtitle">ACCESS YOUR COMMAND CENTER</div>
+        <div class="form-group">
+          <label class="form-label">EMAIL</label>
+          <input type="email" id="signin-email" class="form-input" placeholder="your@email.com" autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">PASSWORD</label>
+          <div class="password-wrapper">
+            <input type="password" id="signin-password" class="form-input" placeholder="••••••••" autocomplete="current-password" />
+            <button class="pw-toggle" data-target="signin-password" type="button">SHOW</button>
+          </div>
+        </div>
+        <button class="btn-primary" id="btn-signin">ACCESS SYSTEM</button>
+        <div id="signin-error" class="error-msg"></div>
+      </div>
+
+      <!-- SIGN UP form -->
+      <div id="form-signup" style="display:none;">
+        <div class="auth-subtitle">CREATE YOUR ACCOUNT</div>
+        <div class="form-group">
+          <label class="form-label">DESIGNATION (NAME)</label>
+          <input type="text" id="signup-name" class="form-input" placeholder="Your name" autocomplete="name" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">EMAIL</label>
+          <input type="email" id="signup-email" class="form-input" placeholder="your@email.com" autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">PASSWORD</label>
+          <div class="password-wrapper">
+            <input type="password" id="signup-password" class="form-input" placeholder="Min. 6 characters" autocomplete="new-password" />
+            <button class="pw-toggle" data-target="signup-password" type="button">SHOW</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">CONFIRM PASSWORD</label>
+          <div class="password-wrapper">
+            <input type="password" id="signup-confirm" class="form-input" placeholder="Repeat password" autocomplete="new-password" />
+            <button class="pw-toggle" data-target="signup-confirm" type="button">SHOW</button>
+          </div>
+        </div>
+        <button class="btn-primary" id="btn-signup">CREATE ACCOUNT</button>
+        <div id="signup-error" class="error-msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SCREEN 3: PROFILE SETUP ── -->
+  <div id="screen-profile" class="screen">
+    <div class="scanlines"></div>
+    <div class="auth-container panel profile-panel">
+      <div class="panel-corner tl">┌</div>
+      <div class="panel-corner tr">┐</div>
+      <div class="panel-corner bl">└</div>
+      <div class="panel-corner br">┘</div>
+      <div class="panel-header">SYSTEM CONFIGURATION</div>
+      <div class="auth-subtitle">CALIBRATE YOUR COMMAND CENTER</div>
+
+      <div class="form-group">
+        <label class="form-label">YOUR NICHE / INDUSTRY</label>
+        <input type="text" id="profile-niche" class="form-input" placeholder="e.g. SaaS, E-commerce, Consulting" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">NEWS FEED 1 — PRIMARY TOPIC</label>
+        <input type="text" id="profile-topic1" class="form-input" placeholder="e.g. AI startups" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">NEWS FEED 2 — SECONDARY TOPIC</label>
+        <input type="text" id="profile-topic2" class="form-input" placeholder="e.g. Venture capital" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">GROQ API KEY</label>
+        <input type="password" id="profile-groq" class="form-input" placeholder="gsk_..." />
+      </div>
+      <div class="form-group">
+        <label class="form-label">TAVILY API KEY</label>
+        <input type="password" id="profile-tavily" class="form-input" placeholder="tvly-..." />
+      </div>
+      <button class="btn-primary" id="btn-save-profile">INITIALIZE JARVIS</button>
+      <div id="profile-error" class="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- ── SCREEN 4: MAIN DASHBOARD ── -->
+  <div id="screen-dashboard" class="screen">
+    <div class="scanlines"></div>
+
+    <!-- HEADER -->
+    <header id="dashboard-header">
+      <div class="header-left">
+        <div class="logo-text">JARVIS OS</div>
+        <div class="logo-sub">FOUNDER COMMAND CENTER</div>
+      </div>
+      <div class="header-center">
+        <div id="greeting-text">GOOD MORNING, FOUNDER</div>
+        <div id="niche-text" class="header-niche"></div>
+      </div>
+      <div class="header-right">
+        <div id="live-clock" class="clock-text">00:00:00</div>
+        <div id="live-date" class="date-text"></div>
+        <button class="btn-ghost small logout-btn" id="btn-logout">⏻ LOGOUT</button>
+      </div>
+    </header>
+
+    <!-- STATUS BAR -->
+    <div id="status-bar">
+      <div class="status-indicators">
+        <div class="status-dot-group">
+          <span class="status-dot online" id="dot-system"></span>
+          <span class="status-label">SYSTEM ONLINE</span>
+        </div>
+        <div class="status-dot-group">
+          <span class="status-dot online" id="dot-jarvis"></span>
+          <span class="status-label">JARVIS AI</span>
+        </div>
+        <div class="status-dot-group">
+          <span class="status-dot" id="dot-news"></span>
+          <span class="status-label">NEWS FEED</span>
+        </div>
+        <div class="status-dot-group">
+          <span class="status-dot online" id="dot-calendar"></span>
+          <span class="status-label">CALENDAR</span>
+        </div>
+        <div class="status-dot-group">
+          <span class="status-dot online" id="dot-tasks"></span>
+          <span class="status-label">TASKS</span>
+        </div>
+      </div>
+      <button class="btn-ghost small" id="btn-reconfigure">⚙ RECONFIGURE</button>
+    </div>
+
+    <!-- MAIN GRID -->
+    <main id="main-grid">
+
+      <!-- NEWS FEED 1 -->
+      <section class="panel news-panel" id="news-panel-1">
+        <div class="panel-corner tl">┌</div>
+        <div class="panel-corner tr">┐</div>
+        <div class="panel-corner bl">└</div>
+        <div class="panel-corner br">┘</div>
+        <div class="panel-header-bar">
+          <span class="panel-title" id="news-title-1">NEWS FEED 01</span>
+          <button class="btn-icon refresh-btn" id="refresh-news-1" title="Refresh">↺</button>
+        </div>
+        <div class="news-list" id="news-list-1">
+          <div class="loading-text">ESTABLISHING CONNECTION...</div>
+        </div>
+      </section>
+
+      <!-- INSTAGRAM TRENDS -->
+      <section class="panel news-panel" id="ig-panel">
+        <div class="panel-corner tl">┌</div>
+        <div class="panel-corner tr">┐</div>
+        <div class="panel-corner bl">└</div>
+        <div class="panel-corner br">┘</div>
+        <div class="panel-header-bar">
+          <span class="panel-title" id="ig-title">VIRAL REELS</span>
+        </div>
+        <div class="ig-subtitle">TOP PERFORMING REELS THIS WEEK</div>
+
+        <!-- Scrape settings bar -->
+        <div class="ig-settings">
+          <input type="text"   id="ig-hashtag-input"  class="form-input small ig-input-hashtag" placeholder="Hashtag" autocomplete="off" />
+          <input type="number" id="ig-minlikes-input" class="form-input small ig-input-num"     placeholder="Min likes" min="0" />
+          <input type="number" id="ig-limit-input"    class="form-input small ig-input-num"     placeholder="Results"  min="1" max="20" />
+          <button class="btn-primary small ig-scrape-btn" id="btn-scrape">SCRAPE</button>
+        </div>
+
+        <div class="ig-list" id="ig-list">
+          <div class="loading-text">SCANNING INSTAGRAM...</div>
+        </div>
+      </section>
+
+      <!-- RIGHT COLUMN -->
+      <div class="right-column">
+
+        <!-- CALENDAR -->
+        <section class="panel" id="calendar-panel">
+          <div class="panel-corner tl">┌</div>
+          <div class="panel-corner tr">┐</div>
+          <div class="panel-corner bl">└</div>
+          <div class="panel-corner br">┘</div>
+          <div class="panel-header-bar">
+            <span class="panel-title">CALENDAR</span>
+          </div>
+          <div id="calendar-widget">
+            <div class="cal-nav">
+              <button class="btn-icon" id="cal-prev">◀</button>
+              <span id="cal-month-label" class="cal-month-label"></span>
+              <button class="btn-icon" id="cal-next">▶</button>
+            </div>
+            <div class="cal-grid-header">
+              <span>SU</span><span>MO</span><span>TU</span><span>WE</span><span>TH</span><span>FR</span><span>SA</span>
+            </div>
+            <div class="cal-grid" id="cal-grid"></div>
+          </div>
+        </section>
+
+        <!-- AGENDA -->
+        <section class="panel" id="agenda-panel">
+          <div class="panel-corner tl">┌</div>
+          <div class="panel-corner tr">┐</div>
+          <div class="panel-corner bl">└</div>
+          <div class="panel-corner br">┘</div>
+          <div class="panel-header-bar">
+            <span class="panel-title">AGENDA</span>
+          </div>
+
+          <div class="agenda-add">
+            <input type="text" id="agenda-input" class="form-input small" placeholder="Title..." />
+            <div class="agenda-add-row">
+              <input type="date" id="agenda-date" class="form-input small date-input" />
+              <input type="time" id="agenda-time" class="form-input small time-input" />
+              <div class="type-toggle">
+                <button class="type-btn active" data-type="task" id="type-task">TASK</button>
+                <button class="type-btn" data-type="event" id="type-event">EVENT</button>
+              </div>
+              <button class="btn-icon add-btn" id="btn-add-agenda">+</button>
+            </div>
+          </div>
+
+          <div id="agenda-list"></div>
+          <button id="btn-show-more" class="agenda-show-more" style="display:none;">▼ SHOW MORE</button>
+        </section>
+
+      </div>
+    </main>
+
+    <!-- JARVIS CHAT PANEL -->
+    <section class="panel" id="chat-panel">
+      <div class="panel-corner tl">┌</div>
+      <div class="panel-corner tr">┐</div>
+      <div class="panel-corner bl">└</div>
+      <div class="panel-corner br">┘</div>
+      <div class="panel-header-bar">
+        <span class="panel-title">JARVIS INTERFACE</span>
+        <div class="chat-controls-right">
+          <span id="voice-status" class="voice-indicator">◉ VOICE ON</span>
+          <button class="btn-ghost small" id="btn-toggle-voice">MUTE</button>
+          <button class="btn-ghost small" id="btn-clr-chat">CLR</button>
+        </div>
+      </div>
+      <div id="chat-history"></div>
+      <div class="chat-input-row">
+        <span class="chat-prompt-symbol">&gt;_</span>
+        <input type="text" id="chat-input" class="form-input chat-input-field" placeholder="QUERY JARVIS..." autocomplete="off" />
+        <button class="btn-primary small" id="btn-send-chat">SEND</button>
+      </div>
+    </section>
+
+  </div><!-- end screen-dashboard -->
+
+  <script src="app.js"></script>
+</body>
+</html>
