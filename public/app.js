@@ -14,6 +14,22 @@ const STATE = {
   agendaExpanded: false          // "show more" state
 };
 
+// ── LOCALSTORAGE KEYS ─────────────────────────────────────────────────────────
+const LS = {
+  SESSION:  'jarvis_session',
+  TOPIC1:   'jarvis_topic1',
+  TOPIC2:   'jarvis_topic2',
+  GROQ:     'jarvis_groq',
+  TAVILY:   'jarvis_tavily',
+  APIFY:    'jarvis_apify',
+  agenda:   uid => `jarvis_agenda_${uid}`,
+  chat:     uid => `jarvis_chat_${uid}`
+};
+
+function lsGet(key)        { try { return localStorage.getItem(key) || ''; } catch { return ''; } }
+function lsSet(key, val)   { try { localStorage.setItem(key, val); } catch {} }
+function lsRemove(...keys) { keys.forEach(k => { try { localStorage.removeItem(k); } catch {} }); }
+
 // ── AUDIO ENGINE (Web Audio API) ───────────────────────────────────────────────
 const AUDIO = {
   ctx: null,
@@ -213,19 +229,23 @@ function getGreeting() {
 }
 
 // ── SESSION MANAGEMENT ────────────────────────────────────────────────────────
-const SESSION_KEY = 'jarvis_session';
 
-function saveSession(userId, accessToken, profile) {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({ userId, accessToken, profile }));
+function saveSession(userId, accessToken) {
+  lsSet(LS.SESSION, JSON.stringify({ userId, accessToken }));
 }
 
 function clearSession() {
-  localStorage.removeItem(SESSION_KEY);
+  lsRemove(
+    LS.SESSION, LS.TOPIC1, LS.TOPIC2,
+    LS.GROQ, LS.TAVILY, LS.APIFY,
+    LS.agenda(STATE.userId || ''),
+    LS.chat(STATE.userId || '')
+  );
 }
 
 function getSavedSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = lsGet(LS.SESSION);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
@@ -244,9 +264,9 @@ async function tryRestoreSession() {
     const data = await res.json();
     if (!res.ok || !data.success) { clearSession(); return false; }
 
-    STATE.userId = data.user.id;
-    STATE.profile = data.profile;
-    saveSession(data.user.id, saved.accessToken, data.profile);
+    STATE.userId  = data.user.id;
+    STATE.profile = data.profile;  // { id, name, email, niche }
+    saveSession(data.user.id, saved.accessToken);
 
     if (data.hasProfile) {
       await initDashboard();
@@ -310,8 +330,8 @@ async function handleSignIn() {
     if (!res.ok) throw new Error(data.error);
 
     STATE.userId  = data.user.id;
-    STATE.profile = data.profile;
-    saveSession(data.user.id, data.session.access_token, data.profile);
+    STATE.profile = data.profile;  // { id, name, email, niche }
+    saveSession(data.user.id, data.session.access_token);
 
     if (data.hasProfile) {
       await initDashboard();
@@ -374,8 +394,8 @@ async function handleSignUp() {
     }
 
     STATE.userId  = data.user.id;
-    STATE.profile = data.profile;
-    saveSession(data.user.id, data.session.access_token, data.profile);
+    STATE.profile = data.profile;  // { id, name, email }
+    saveSession(data.user.id, data.session.access_token);
     transitionTo('screen-profile');
   } catch (err) {
     errEl.textContent = err.message.toUpperCase();
@@ -392,15 +412,16 @@ document.getElementById('signup-confirm').addEventListener('keydown', e => {
 
 // ── PROFILE SETUP ─────────────────────────────────────────────────────────────
 document.getElementById('btn-save-profile').addEventListener('click', async () => {
-  const niche = document.getElementById('profile-niche').value.trim();
-  const topic1 = document.getElementById('profile-topic1').value.trim();
-  const topic2 = document.getElementById('profile-topic2').value.trim();
-  const groqKey = document.getElementById('profile-groq').value.trim();
+  const niche     = document.getElementById('profile-niche').value.trim();
+  const topic1    = document.getElementById('profile-topic1').value.trim();
+  const topic2    = document.getElementById('profile-topic2').value.trim();
+  const groqKey   = document.getElementById('profile-groq').value.trim();
   const tavilyKey = document.getElementById('profile-tavily').value.trim();
-  const errEl = document.getElementById('profile-error');
+  const apifyKey  = document.getElementById('profile-apify').value.trim();
+  const errEl     = document.getElementById('profile-error');
 
   if (!niche || !topic1 || !topic2 || !groqKey || !tavilyKey) {
-    errEl.textContent = 'ALL FIELDS REQUIRED.';
+    errEl.textContent = 'NICHE, TOPICS, GROQ KEY AND TAVILY KEY ARE REQUIRED.';
     return;
   }
   errEl.textContent = '';
@@ -410,26 +431,28 @@ document.getElementById('btn-save-profile').addEventListener('click', async () =
   btn.textContent = 'INITIALIZING';
 
   try {
+    // Save only niche to Supabase
     const res = await fetch('/api/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId: STATE.userId,
-        name: STATE.profile?.name || '',
-        niche,
-        news_topic_1: topic1,
-        news_topic_2: topic2,
-        groq_key: groqKey,
-        tavily_key: tavilyKey
+        name:   STATE.profile?.name || '',
+        niche
       })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
 
-    STATE.profile = data.profile;
-    // Update persisted session with full profile
-    const saved = getSavedSession();
-    if (saved) saveSession(STATE.userId, saved.accessToken, data.profile);
+    STATE.profile = data.profile;  // { id, name, email, niche }
+
+    // Save everything else to localStorage
+    lsSet(LS.TOPIC1,  topic1);
+    lsSet(LS.TOPIC2,  topic2);
+    lsSet(LS.GROQ,    groqKey);
+    lsSet(LS.TAVILY,  tavilyKey);
+    if (apifyKey) lsSet(LS.APIFY, apifyKey);
+
     await initDashboard();
     transitionTo('screen-dashboard');
   } catch (err) {
@@ -450,10 +473,12 @@ async function initDashboard() {
   document.getElementById('niche-text').textContent =
     p?.niche ? `SECTOR: ${p.niche.toUpperCase()}` : '';
 
+  const topic1 = lsGet(LS.TOPIC1);
+  const topic2 = lsGet(LS.TOPIC2);
+
   document.getElementById('news-title-1').textContent =
-    `NEWS FEED 01 — ${(p?.news_topic_1 || 'TOPIC 1').toUpperCase()}`;
-  const igTag = (p?.news_topic_2 || '')
-    .toLowerCase().replace(/[^a-z0-9]/g, '');
+    `NEWS FEED 01 — ${(topic1 || 'TOPIC 1').toUpperCase()}`;
+  const igTag = topic2.toLowerCase().replace(/[^a-z0-9]/g, '');
   document.getElementById('ig-hashtag-input').value  = igTag;
   document.getElementById('ig-minlikes-input').value = 100;
   document.getElementById('ig-limit-input').value    = 8;
@@ -476,25 +501,19 @@ async function initDashboard() {
 // ── RECONFIGURE ───────────────────────────────────────────────────────────────
 document.getElementById('btn-reconfigure').addEventListener('click', () => {
   transitionTo('screen-profile');
-  document.getElementById('profile-niche').value = STATE.profile?.niche || '';
-  document.getElementById('profile-topic1').value = STATE.profile?.news_topic_1 || '';
-  document.getElementById('profile-topic2').value = STATE.profile?.news_topic_2 || '';
-  document.getElementById('profile-groq').value = '';
-  document.getElementById('profile-tavily').value = '';
+  document.getElementById('profile-niche').value   = STATE.profile?.niche   || '';
+  document.getElementById('profile-topic1').value  = lsGet(LS.TOPIC1);
+  document.getElementById('profile-topic2').value  = lsGet(LS.TOPIC2);
+  document.getElementById('profile-groq').value    = '';
+  document.getElementById('profile-tavily').value  = '';
+  document.getElementById('profile-apify').value   = '';
 });
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-logout').addEventListener('click', async () => {
-  try {
-    await fetch('/api/auth/signout', { method: 'POST' });
-  } catch { /* ignore network errors on logout */ }
-  clearSession();
-  STATE.userId  = null;
-  STATE.profile = null;
-  STATE.agenda  = [];
-  STATE.chatHistory = [];
+  try { await fetch('/api/auth/signout', { method: 'POST' }); } catch {}
+  clearSession();   // clears all jarvis_* keys including agenda_[uid] and chat_[uid]
   window.speechSynthesis?.cancel();
-  // Reload cleanly so all intervals are cleared
   window.location.reload();
 });
 
@@ -512,18 +531,27 @@ function setNewsDotOnline() {
 
 // ── NEWS ───────────────────────────────────────────────────────────────────────
 async function loadNews(feedNum) {
-  const listEl = document.getElementById(`news-list-${feedNum}`);
-  const topic = STATE.profile?.news_topic_1;
+  const listEl    = document.getElementById(`news-list-${feedNum}`);
+  const topic     = lsGet(LS.TOPIC1);
+  const tavilyKey = lsGet(LS.TAVILY);
 
-  if (!topic || !STATE.userId) {
+  if (!topic) {
     listEl.innerHTML = '<div class="loading-text">NO TOPIC CONFIGURED</div>';
+    return;
+  }
+  if (!tavilyKey) {
+    listEl.innerHTML = '<div class="loading-text">TAVILY KEY NOT SET</div>';
     return;
   }
 
   listEl.innerHTML = '<div class="loading-text">FETCHING INTEL...</div>';
 
   try {
-    const res = await fetch(`/api/news?topic=${encodeURIComponent(topic)}&userId=${STATE.userId}`);
+    const res = await fetch('/api/news', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic, tavily_key: tavilyKey })
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
 
@@ -577,18 +605,23 @@ async function loadInstagramTrends() {
     return;
   }
 
+  const apifyToken = lsGet(LS.APIFY);
+
   // Reflect current hashtag in the panel title
   document.getElementById('ig-title').textContent = `VIRAL REELS — #${hashtag}`;
   listEl.innerHTML = `<div class="loading-text">SCRAPING #${escapeHtml(hashtag)}...</div>`;
 
   try {
-    const qs  = `hashtag=${encodeURIComponent(hashtag)}&minLikes=${minLikes}&limit=${limit}`;
-    const res = await fetch(`/api/instagram-trends?${qs}`);
+    const res = await fetch('/api/instagram-trends', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hashtag, minLikes, limit, apify_token: apifyToken })
+    });
     const data = await res.json();
 
     if (!res.ok) {
       if (data.error === 'APIFY_KEY_MISSING') {
-        listEl.innerHTML = '<div class="ig-empty-msg">ADD APIFY KEY TO ENABLE<br>INSTAGRAM SCRAPER</div>';
+        listEl.innerHTML = '<div class="ig-empty-msg">ADD APIFY TOKEN TO ENABLE<br>INSTAGRAM SCRAPER</div>';
       } else {
         listEl.innerHTML = `<div class="ig-empty-msg">ERROR: ${escapeHtml(data.error || 'unknown')}</div>`;
       }
@@ -641,25 +674,33 @@ function formatNewsDate(dateStr) {
   } catch { return dateStr; }
 }
 
-// ── AGENDA (unified tasks + events) ───────────────────────────────────────────
+// ── AGENDA (localStorage-only — no Supabase) ─────────────────────────────────
 const TODAY_STR = () => new Date().toISOString().split('T')[0];
 const AGENDA_VISIBLE_CAP = 10;
+
+function newId() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
+}
+
+function saveAgenda() {
+  if (!STATE.userId) return;
+  try { lsSet(LS.agenda(STATE.userId), JSON.stringify(STATE.agenda)); } catch {}
+}
 
 async function loadAgenda() {
   if (!STATE.userId) return;
   try {
-    const res = await fetch(`/api/tasks/${STATE.userId}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    STATE.agenda = (data.tasks || []).map(row => ({
-      ...row,
-      type: row.type || 'task'
-    }));
-    renderAgenda();
-    renderCalendar();
-  } catch (err) {
-    console.error('Agenda load error:', err);
+    const raw = lsGet(LS.agenda(STATE.userId));
+    STATE.agenda = raw ? JSON.parse(raw) : [];
+  } catch {
+    STATE.agenda = [];
   }
+  // Normalize legacy items
+  STATE.agenda = STATE.agenda.map(row => ({ ...row, type: row.type || 'task' }));
+  renderAgenda();
+  renderCalendar();
 }
 
 // Sort helper: by date asc (nulls last), then time asc (nulls last)
@@ -778,8 +819,8 @@ document.getElementById('btn-show-more').addEventListener('click', () => {
   renderAgenda();
 });
 
-// Delegated click for checkbox / delete
-document.getElementById('agenda-list').addEventListener('click', async (e) => {
+// Delegated click for checkbox / delete (localStorage-only)
+document.getElementById('agenda-list').addEventListener('click', (e) => {
   const checkbox = e.target.closest('.agenda-checkbox');
   const delBtn   = e.target.closest('.agenda-del-btn');
 
@@ -787,26 +828,18 @@ document.getElementById('agenda-list').addEventListener('click', async (e) => {
     const id = checkbox.dataset.id;
     const item = STATE.agenda.find(t => t.id === id);
     if (!item || item.type !== 'task') return;
-    try {
-      const res = await fetch(`/api/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ done: !item.done })
-      });
-      const data = await res.json();
-      item.done = data.task.done;
-      renderAgenda();
-    } catch (err) { console.error(err); }
+    item.done = !item.done;
+    saveAgenda();
+    renderAgenda();
+    return;
   }
 
   if (delBtn) {
     const id = delBtn.dataset.id;
-    try {
-      await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
-      STATE.agenda = STATE.agenda.filter(t => t.id !== id);
-      renderAgenda();
-      renderCalendar();
-    } catch (err) { console.error(err); }
+    STATE.agenda = STATE.agenda.filter(t => t.id !== id);
+    saveAgenda();
+    renderAgenda();
+    renderCalendar();
   }
 });
 
@@ -818,28 +851,30 @@ document.querySelectorAll('.type-btn').forEach(btn => {
   });
 });
 
-async function addAgendaItem() {
+function addAgendaItem() {
   const text = document.getElementById('agenda-input').value.trim();
   const date = document.getElementById('agenda-date').value;
   const time = document.getElementById('agenda-time').value;
   const type = STATE.agendaTypeSelected;
   if (!text) return;
 
-  try {
-    const res = await fetch('/api/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: STATE.userId, text, date, time, type })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    STATE.agenda.push({ ...data.task, type: data.task.type || type });
-    renderAgenda();
-    renderCalendar();
-    document.getElementById('agenda-input').value = '';
-    document.getElementById('agenda-date').value  = '';
-    document.getElementById('agenda-time').value  = '';
-  } catch (err) { console.error(err); }
+  const item = {
+    id:         newId(),
+    user_id:    STATE.userId,
+    text,
+    date:       date || null,
+    time:       time || null,
+    done:       false,
+    type,
+    created_at: new Date().toISOString()
+  };
+  STATE.agenda.push(item);
+  saveAgenda();
+  renderAgenda();
+  renderCalendar();
+  document.getElementById('agenda-input').value = '';
+  document.getElementById('agenda-date').value  = '';
+  document.getElementById('agenda-time').value  = '';
 }
 
 document.getElementById('btn-add-agenda').addEventListener('click', addAgendaItem);
@@ -1022,9 +1057,10 @@ async function sendChat() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: STATE.userId,
+        userId:   STATE.userId,
         message,
-        history: STATE.chatHistory.slice(-10)
+        history:  STATE.chatHistory.slice(-10),
+        groq_key: lsGet(LS.GROQ)
       })
     });
     const data = await res.json();

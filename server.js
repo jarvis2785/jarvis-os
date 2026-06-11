@@ -17,9 +17,9 @@ const supabase = createClient(
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 
-// Helper: check if a profile is fully configured (niche + API keys present)
+// Helper: profile is complete when niche is set (API keys live in localStorage)
 function isFullProfile(profile) {
-  return !!(profile?.niche && profile?.groq_key && profile?.tavily_key);
+  return !!profile?.niche;
 }
 
 app.post('/api/auth/signup', async (req, res) => {
@@ -40,11 +40,11 @@ app.post('/api/auth/signup', async (req, res) => {
     });
   }
 
-  // Create a minimal profile row with just the name so we know who this is
+  // Create a minimal profile row with name + email (niche added on profile setup)
   const { data: profile } = await supabase
     .from('profiles')
-    .insert({ id: data.user.id, name })
-    .select()
+    .insert({ id: data.user.id, name, email })
+    .select('id, name, email, niche')
     .single();
 
   res.json({
@@ -68,7 +68,7 @@ app.post('/api/auth/signin', async (req, res) => {
   const userId = data.user?.id;
   const { data: profile } = await supabase
     .from('profiles')
-    .select('*')
+    .select('id, name, email, niche')
     .eq('id', userId)
     .single();
 
@@ -100,7 +100,7 @@ app.post('/api/auth/session', async (req, res) => {
   const userId = data.user.id;
   const { data: profile } = await supabase
     .from('profiles')
-    .select('*')
+    .select('id, name, email, niche')
     .eq('id', userId)
     .single();
 
@@ -115,21 +115,13 @@ app.post('/api/auth/session', async (req, res) => {
 // ── PROFILE ───────────────────────────────────────────────────────────────────
 
 app.post('/api/profile', async (req, res) => {
-  const { userId, name, niche, news_topic_1, news_topic_2, groq_key, tavily_key } = req.body;
+  const { userId, name, niche } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId required' });
 
   const { data, error } = await supabase
     .from('profiles')
-    .upsert({
-      id: userId,
-      name,
-      niche,
-      news_topic_1,
-      news_topic_2,
-      groq_key,
-      tavily_key
-    })
-    .select()
+    .upsert({ id: userId, name, niche })
+    .select('id, name, email, niche')
     .single();
 
   if (error) return res.status(400).json({ error: error.message });
@@ -139,7 +131,7 @@ app.post('/api/profile', async (req, res) => {
 app.get('/api/profile/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select('id, name, email, niche')
     .eq('id', req.params.id)
     .single();
 
@@ -201,17 +193,18 @@ app.delete('/api/tasks/:id', async (req, res) => {
 // ── CHAT ──────────────────────────────────────────────────────────────────────
 
 app.post('/api/chat', async (req, res) => {
-  const { userId, message, history } = req.body;
+  const { userId, message, history, groq_key } = req.body;
   if (!userId || !message) return res.status(400).json({ error: 'userId and message required' });
+  if (!groq_key) return res.status(400).json({ error: 'Groq key required' });
 
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('name, niche, groq_key')
+    .select('name, niche')
     .eq('id', userId)
     .single();
 
-  if (profileError || !profile?.groq_key) {
-    return res.status(400).json({ error: 'Profile or Groq key not found' });
+  if (profileError || !profile) {
+    return res.status(400).json({ error: 'Profile not found' });
   }
 
   // ── Build grounded context from the unified agenda (tasks table) ──
@@ -289,7 +282,7 @@ RULES:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${profile.groq_key}`
+        'Authorization': `Bearer ${groq_key}`
       },
       body: JSON.stringify({
         model: 'llama-3.1-8b-instant',
@@ -313,26 +306,17 @@ RULES:
 
 // ── NEWS ──────────────────────────────────────────────────────────────────────
 
-app.get('/api/news', async (req, res) => {
-  const { topic, userId } = req.query;
-  if (!topic || !userId) return res.status(400).json({ error: 'topic and userId required' });
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('tavily_key')
-    .eq('id', userId)
-    .single();
-
-  if (!profile?.tavily_key) {
-    return res.status(400).json({ error: 'Tavily key not found in profile' });
-  }
+app.post('/api/news', async (req, res) => {
+  const { topic, tavily_key } = req.body;
+  if (!topic) return res.status(400).json({ error: 'topic required' });
+  if (!tavily_key) return res.status(400).json({ error: 'Tavily key required' });
 
   try {
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        api_key: profile.tavily_key,
+        api_key: tavily_key,
         query: topic,
         search_depth: 'basic',
         include_answer: false,
@@ -362,14 +346,11 @@ app.get('/api/news', async (req, res) => {
 
 // ── INSTAGRAM TRENDS (Apify) ──────────────────────────────────────────────────
 
-app.get('/api/instagram-trends', async (req, res) => {
-  if (!process.env.APIFY_TOKEN) {
-    return res.status(400).json({ error: 'APIFY_KEY_MISSING' });
-  }
+app.post('/api/instagram-trends', async (req, res) => {
+  const { hashtag: rawHashtag, minLikes: rawMinLikes, limit: rawLimit, apify_token } = req.body;
 
-  // ── Read & sanitize query params ──
-  const rawHashtag = req.query.hashtag;
-  if (!rawHashtag) return res.status(400).json({ error: 'hashtag required' });
+  if (!apify_token) return res.status(400).json({ error: 'APIFY_KEY_MISSING' });
+  if (!rawHashtag)  return res.status(400).json({ error: 'hashtag required' });
 
   const hashtag = String(rawHashtag)
     .toLowerCase()
@@ -377,21 +358,19 @@ app.get('/api/instagram-trends', async (req, res) => {
     .replace(/[^a-z0-9]/g, '');
   if (!hashtag) return res.status(400).json({ error: 'Invalid hashtag' });
 
-  const minLikes = Math.max(0, parseInt(req.query.minLikes, 10) || 100);
-  const limit    = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
-  // Scrape a bit extra so filtering still produces ~limit results
+  const minLikes = Math.max(0, parseInt(rawMinLikes, 10) || 100);
+  const limit    = Math.min(20, Math.max(1, parseInt(rawLimit, 10) || 8));
   const scrapeCount = Math.min(50, Math.max(limit, 12));
 
   try {
-    const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items?token=${process.env.APIFY_TOKEN}`;
+    const apifyUrl = `https://api.apify.com/v2/acts/apify~instagram-search-scraper/run-sync-get-dataset-items?token=${apify_token}&timeout=60`;
     const response = await fetch(apifyUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        username: [],
-        hashtags: [hashtag],
-        resultsLimit: scrapeCount,
-        addParentData: false
+        searchQueries: [hashtag],
+        searchType:    'hashtag',
+        resultsLimit:  parseInt(limit) || 10
       })
     });
 
@@ -403,22 +382,28 @@ app.get('/api/instagram-trends', async (req, res) => {
     const items = await response.json();
     const list  = Array.isArray(items) ? items : [];
 
-    // Normalize each reel into { caption, likes, comments, plays, url, thumbnail }
+    // DEBUG: see the raw shape of the search scraper's objects
+    if (list.length > 0) {
+      console.log('[Apify search] first raw result:', JSON.stringify(list[0], null, 2));
+    } else {
+      console.log('[Apify search] zero results for hashtag:', hashtag);
+    }
+
+    // Map to { caption, likes, comments, url, thumbnail, timestamp, type }
     const norm = list.map(p => {
-      const plays    = Number(p.videoPlayCount ?? p.playCount ?? p.videoViewCount ?? 0);
-      const likes    = Number(p.likesCount ?? p.likes ?? 0);
-      const comments = Number(p.commentsCount ?? p.comments ?? 0);
-      const url      = p.url || (p.shortCode ? `https://www.instagram.com/reel/${p.shortCode}/` : '#');
-      const caption  = (p.caption || p.text || '').slice(0, 100);
+      const likes     = Number(p.likesCount ?? p.likes ?? 0);
+      const comments  = Number(p.commentsCount ?? p.comments ?? 0);
+      const caption   = (p.caption || p.text || '').slice(0, 100);
+      const url       = p.url || (p.shortCode ? `https://www.instagram.com/p/${p.shortCode}/` : '#');
       const thumbnail = p.displayUrl || p.thumbnailSrc || p.imageUrl || null;
-      return { caption, likes, comments, plays, url, thumbnail };
+      const timestamp = p.timestamp || p.takenAtTimestamp || p.takenAt || null;
+      const type      = p.type || p.productType || (p.isVideo ? 'video' : 'image');
+      return { caption, likes, comments, url, thumbnail, timestamp, type };
     });
 
-    // Filter by minLikes from query
+    // Filter by minLikes, sort by likes desc, take top results
     const filtered = norm.filter(r => r.likes >= minLikes);
-    // Sort by plays desc
-    filtered.sort((a, b) => b.plays - a.plays);
-    // Return `limit` results
+    filtered.sort((a, b) => b.likes - a.likes);
     const top = filtered.slice(0, limit);
 
     res.json({ hashtag, minLikes, limit, results: top });
