@@ -205,27 +205,31 @@
         </div>
       </section>
 
-      <!-- INSTAGRAM TRENDS -->
+      <!-- CONTENT INTELLIGENCE -->
       <section class="panel news-panel" id="ig-panel">
         <div class="panel-corner tl">┌</div>
         <div class="panel-corner tr">┐</div>
         <div class="panel-corner bl">└</div>
         <div class="panel-corner br">┘</div>
         <div class="panel-header-bar">
-          <span class="panel-title" id="ig-title">VIRAL REELS</span>
+          <span class="panel-title" id="ig-title">CONTENT INTELLIGENCE</span>
         </div>
-        <div class="ig-subtitle">TOP PERFORMING REELS THIS WEEK</div>
+        <div class="ig-subtitle">AI-POWERED INSTAGRAM REPORT</div>
 
-        <!-- Scrape settings bar -->
-        <div class="ig-settings">
-          <input type="text"   id="ig-hashtag-input"  class="form-input small ig-input-hashtag" placeholder="Hashtag" autocomplete="off" />
-          <input type="number" id="ig-minlikes-input" class="form-input small ig-input-num"     placeholder="Min likes" min="0" />
-          <input type="number" id="ig-limit-input"    class="form-input small ig-input-num"     placeholder="Results"  min="1" max="20" />
-          <button class="btn-primary small ig-scrape-btn" id="btn-scrape">SCRAPE</button>
+        <!-- Settings -->
+        <div class="ig-settings intel-settings">
+          <div class="intel-settings-row">
+            <input type="text"   id="ig-username-input" class="form-input small ig-input-hashtag" placeholder="USERNAME (e.g. nike)" autocomplete="off" />
+            <input type="number" id="ig-limit-input"    class="form-input small ig-input-num"     placeholder="LIMIT" min="1" max="50" value="10" />
+          </div>
+          <div class="intel-settings-row">
+            <input type="password" id="ig-groq-input"   class="form-input small intel-input-key"  placeholder="GROQ API KEY" autocomplete="off" />
+            <button class="btn-primary small ig-scrape-btn" id="btn-analyze">ANALYZE</button>
+          </div>
         </div>
 
         <div class="ig-list" id="ig-list">
-          <div class="loading-text">SCANNING INSTAGRAM...</div>
+          <div class="loading-text">AWAITING TARGET...</div>
         </div>
       </section>
 

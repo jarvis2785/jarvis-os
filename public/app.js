@@ -478,18 +478,18 @@ async function initDashboard() {
 
   document.getElementById('news-title-1').textContent =
     `NEWS FEED 01 — ${(topic1 || 'TOPIC 1').toUpperCase()}`;
-  const igTag = topic2.toLowerCase().replace(/[^a-z0-9]/g, '');
-  document.getElementById('ig-hashtag-input').value  = igTag;
-  document.getElementById('ig-minlikes-input').value = 100;
-  document.getElementById('ig-limit-input').value    = 8;
-  document.getElementById('ig-title').textContent    = `VIRAL REELS${igTag ? ' — #' + igTag : ''}`;
+
+  // Prefill Content Intelligence inputs
+  const seedUsername = topic2.toLowerCase().replace(/[^a-z0-9._]/g, '');
+  document.getElementById('ig-username-input').value = seedUsername;
+  document.getElementById('ig-limit-input').value    = 10;
+  document.getElementById('ig-groq-input').value     = lsGet(LS.GROQ);
 
   startClock();
   renderCalendar();
   await Promise.all([
     loadAgenda(),
-    loadNews(1),
-    loadInstagramTrends()
+    loadNews(1)
   ]);
 
   requestNotificationPermission();
@@ -581,81 +581,250 @@ async function loadNews(feedNum) {
 }
 
 document.getElementById('refresh-news-1').addEventListener('click', () => loadNews(1));
-document.getElementById('btn-scrape').addEventListener('click', () => loadInstagramTrends());
-// Enter on any settings input triggers SCRAPE
-['ig-hashtag-input', 'ig-minlikes-input', 'ig-limit-input'].forEach(id => {
+
+// ── CONTENT INTELLIGENCE ──────────────────────────────────────────────────────
+const CONTENT_INTEL_WEBHOOK = 'http://localhost:5678/webhook/content-intelligence';
+
+document.getElementById('btn-analyze').addEventListener('click', runContentIntelligence);
+['ig-username-input', 'ig-limit-input', 'ig-groq-input'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
-    if (e.key === 'Enter') loadInstagramTrends();
+    if (e.key === 'Enter') runContentIntelligence();
   });
 });
 
-// ── INSTAGRAM TRENDS ──────────────────────────────────────────────────────────
-async function loadInstagramTrends() {
+async function runContentIntelligence() {
   const listEl = document.getElementById('ig-list');
-  if (!STATE.userId) return;
+  const btn    = document.getElementById('btn-analyze');
 
-  // Read scrape parameters from the settings bar
-  const rawHashtag = document.getElementById('ig-hashtag-input').value.trim();
-  const hashtag    = rawHashtag.replace(/^#/, '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const minLikes   = Math.max(0, parseInt(document.getElementById('ig-minlikes-input').value, 10) || 100);
-  const limit      = Math.min(20, Math.max(1, parseInt(document.getElementById('ig-limit-input').value, 10) || 8));
+  const username = document.getElementById('ig-username-input').value.trim().replace(/^@/, '');
+  const limit    = Math.max(1, Math.min(50, parseInt(document.getElementById('ig-limit-input').value, 10) || 10));
+  const groqKey  = document.getElementById('ig-groq-input').value.trim();
 
-  if (!hashtag) {
-    listEl.innerHTML = '<div class="ig-empty-msg">ENTER A HASHTAG ABOVE</div>';
+  if (!username) {
+    listEl.innerHTML = '<div class="intel-error">// USERNAME REQUIRED</div>';
+    return;
+  }
+  if (!groqKey) {
+    listEl.innerHTML = '<div class="intel-error">// GROQ KEY REQUIRED</div>';
     return;
   }
 
-  const apifyToken = lsGet(LS.APIFY);
+  // Persist groq key for next session
+  lsSet(LS.GROQ, groqKey);
 
-  // Reflect current hashtag in the panel title
-  document.getElementById('ig-title').textContent = `VIRAL REELS — #${hashtag}`;
-  listEl.innerHTML = `<div class="loading-text">SCRAPING #${escapeHtml(hashtag)}...</div>`;
+  // Loading state
+  btn.classList.add('loading');
+  btn.textContent = 'SCANNING';
+  listEl.innerHTML = `
+    <div class="loading-text">SCANNING @${escapeHtml(username)} — THIS TAKES ~30 SECONDS</div>
+  `;
 
   try {
-    const res = await fetch('/api/instagram-trends', {
+    const res = await fetch(CONTENT_INTEL_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hashtag, minLikes, limit, apify_token: apifyToken })
+      body: JSON.stringify({
+        username,
+        minLikes:    0,
+        limit,
+        resultsType: 'reels',
+        contentType: 'all',
+        groq_key:    groqKey
+      })
     });
-    const data = await res.json();
 
     if (!res.ok) {
-      if (data.error === 'APIFY_KEY_MISSING') {
-        listEl.innerHTML = '<div class="ig-empty-msg">ADD APIFY TOKEN TO ENABLE<br>INSTAGRAM SCRAPER</div>';
-      } else {
-        listEl.innerHTML = `<div class="ig-empty-msg">ERROR: ${escapeHtml(data.error || 'unknown')}</div>`;
-      }
+      const txt = await res.text();
+      listEl.innerHTML = `<div class="intel-error">// CONNECTION FAILED — ${escapeHtml(txt.slice(0, 100) || res.statusText)}</div>`;
       return;
     }
 
-    if (!data.results?.length) {
-      listEl.innerHTML = '<div class="ig-empty-msg">NO VIRAL REELS FOUND<br>FOR THIS HASHTAG</div>';
-      return;
-    }
+    const data = await res.json();
+    renderIntelReport(data);
+  } catch (err) {
+    listEl.innerHTML = `<div class="intel-error">// CONNECTION FAILED — CHECK WEBHOOK</div>`;
+    console.error('Content Intelligence error:', err);
+  } finally {
+    btn.classList.remove('loading');
+    btn.textContent = 'ANALYZE';
+  }
+}
 
-    listEl.innerHTML = '';
-    data.results.forEach(post => {
-      const div = document.createElement('div');
-      div.className = 'ig-item';
-      div.innerHTML = `
-        ${post.thumbnail
-          ? `<img class="ig-thumb" src="${escapeHtml(post.thumbnail)}" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ig-thumb-placeholder',textContent:'IG'}))"/>`
-          : `<div class="ig-thumb-placeholder">IG</div>`}
-        <div class="ig-content">
-          <div class="ig-caption">${escapeHtml(post.caption || '(no caption)')}</div>
-          <div class="ig-stats">
-            <span class="ig-stat-eng"><span class="ig-stat-num" style="color:var(--green)">${formatCount(post.plays)}</span> PLAYS</span>
-            <span><span class="ig-stat-num">${formatCount(post.likes)}</span> LIKES</span>
-            <span><span class="ig-stat-num">${formatCount(post.comments)}</span> COMM</span>
+function renderIntelReport(data) {
+  const listEl = document.getElementById('ig-list');
+
+  if (!data || data.success === false) {
+    listEl.innerHTML = `<div class="intel-error">// ANALYSIS FAILED — ${escapeHtml(data?.error || 'NO DATA')}</div>`;
+    return;
+  }
+
+  const posts    = Array.isArray(data.posts) ? data.posts : [];
+  const stats    = data.stats || {};
+  const report   = data.report || {};
+  const last7    = data.last7DaysTopPost || null;
+  const topPost  = posts[0] || null;
+
+  // Sections built piece-by-piece
+  const sections = [];
+
+  // ─ A. METRICS BAR ─
+  sections.push(`
+    <div class="intel-section">
+      <div class="intel-label">:: METRICS</div>
+      <div class="intel-metrics">
+        ${metricCard('AVG VIEWS',    formatCount(stats.avgViews))}
+        ${metricCard('AVG LIKES',    formatCount(stats.avgLikes))}
+        ${metricCard('AVG COMMENTS', formatCount(stats.avgComments))}
+        ${metricCard('TOP SCORE',    formatCount(stats.topEngagementScore))}
+      </div>
+    </div>
+  `);
+
+  // ─ B. ENGAGEMENT CHART ─
+  if (posts.length) {
+    const maxScore = Math.max(1, ...posts.map(p => Number(p.engagementScore) || 0));
+    const bars = posts.map(p => {
+      const score = Number(p.engagementScore) || 0;
+      const pct   = Math.max(2, Math.round((score / maxScore) * 100));
+      const cap   = (p.caption || '(no caption)').slice(0, 30);
+      return `
+        <div class="intel-bar-row">
+          <div class="intel-bar-caption">${escapeHtml(cap)}</div>
+          <div class="intel-bar-track">
+            <div class="intel-bar-fill" style="width:${pct}%"></div>
+            <span class="intel-bar-score">${formatCount(score)}</span>
           </div>
-          <a class="ig-view-btn" href="${escapeHtml(post.url)}" target="_blank" rel="noopener noreferrer">VIEW REEL ▸</a>
         </div>
       `;
-      listEl.appendChild(div);
-    });
-  } catch (err) {
-    listEl.innerHTML = `<div class="ig-empty-msg">ERROR: ${escapeHtml(err.message)}</div>`;
+    }).join('');
+
+    sections.push(`
+      <div class="intel-section">
+        <div class="intel-label">:: ENGAGEMENT CHART</div>
+        <div class="intel-chart">${bars}</div>
+      </div>
+    `);
   }
+
+  // ─ C. TOP PERFORMER ─
+  if (topPost) {
+    sections.push(`
+      <div class="intel-section">
+        <div class="intel-post-block">
+          <div class="intel-post-tag">// TOP PERFORMER</div>
+          ${renderPostBody(topPost)}
+        </div>
+      </div>
+    `);
+  }
+
+  // ─ D. LAST 7 DAYS ─
+  if (last7) {
+    sections.push(`
+      <div class="intel-section">
+        <div class="intel-post-block">
+          <div class="intel-post-tag">// LAST 7 DAYS</div>
+          ${renderPostBody(last7)}
+        </div>
+      </div>
+    `);
+  }
+
+  // ─ E. INTEL REPORT ─
+  // Executive summary
+  if (report.executiveSummary) {
+    sections.push(reportTextSection('EXECUTIVE SUMMARY', report.executiveSummary));
+  }
+
+  // Top hooks
+  const topHooks = report.captionAnalysis?.topHooks || [];
+  if (topHooks.length) {
+    sections.push(reportListSection('TOP HOOKS', topHooks));
+  }
+
+  // Content ideas
+  const ideas = Array.isArray(report.contentIdeas) ? report.contentIdeas : [];
+  if (ideas.length) {
+    const items = ideas.map(idea => {
+      const title = escapeHtml(idea?.title || idea?.name || '');
+      const hook  = escapeHtml(idea?.hook  || idea?.description || '');
+      return `<li>
+        <span class="intel-idea-title">${title}</span>
+        ${hook ? `<span class="intel-idea-hook">${hook}</span>` : ''}
+      </li>`;
+    }).join('');
+    sections.push(`
+      <div class="intel-section">
+        <div class="intel-label">:: CONTENT IDEAS</div>
+        <ul class="intel-list">${items}</ul>
+      </div>
+    `);
+  }
+
+  // What to avoid (can be string or array)
+  if (report.whatToAvoid) {
+    if (Array.isArray(report.whatToAvoid)) {
+      sections.push(reportListSection('WHAT TO AVOID', report.whatToAvoid));
+    } else {
+      sections.push(reportTextSection('WHAT TO AVOID', report.whatToAvoid));
+    }
+  }
+
+  // Strategic recommendations
+  const recs = Array.isArray(report.strategicRecommendations) ? report.strategicRecommendations : [];
+  if (recs.length) {
+    sections.push(reportListSection('RECOMMENDATIONS', recs));
+  }
+
+  listEl.innerHTML = `<div class="intel-report">${sections.join('')}</div>`;
+}
+
+function metricCard(label, value) {
+  return `
+    <div class="intel-metric">
+      <div class="intel-metric-value">${value}</div>
+      <div class="intel-metric-label">${label}</div>
+    </div>
+  `;
+}
+
+function reportTextSection(label, text) {
+  return `
+    <div class="intel-section">
+      <div class="intel-label">:: ${escapeHtml(label)}</div>
+      <div class="intel-text">${escapeHtml(text)}</div>
+    </div>
+  `;
+}
+
+function reportListSection(label, items) {
+  const li = items
+    .filter(x => x !== null && x !== undefined && x !== '')
+    .map(x => `<li>${escapeHtml(typeof x === 'string' ? x : JSON.stringify(x))}</li>`)
+    .join('');
+  return `
+    <div class="intel-section">
+      <div class="intel-label">:: ${escapeHtml(label)}</div>
+      <ul class="intel-list">${li}</ul>
+    </div>
+  `;
+}
+
+function renderPostBody(post) {
+  const caption  = post.caption || '(no caption)';
+  const likes    = post.likes ?? post.likesCount;
+  const views    = post.views ?? post.videoViewCount ?? post.videoPlayCount ?? post.playCount;
+  const comments = post.comments ?? post.commentsCount;
+  const url      = post.url || '#';
+  return `
+    <div class="intel-post-caption">${escapeHtml(caption)}</div>
+    <div class="intel-post-stats">
+      ${views    != null ? `<span><span class="num">${formatCount(views)}</span> VIEWS</span>` : ''}
+      ${likes    != null ? `<span><span class="num">${formatCount(likes)}</span> LIKES</span>` : ''}
+      ${comments != null ? `<span><span class="num">${formatCount(comments)}</span> COMMENTS</span>` : ''}
+    </div>
+    <a class="intel-post-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">VIEW POST ▸</a>
+  `;
 }
 
 function formatCount(n) {
