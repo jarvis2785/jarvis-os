@@ -466,7 +466,7 @@ document.getElementById('btn-save-profile').addEventListener('click', async () =
 // ── DASHBOARD INIT ─────────────────────────────────────────────────────────────
 async function initDashboard() {
   const p = STATE.profile;
-  const name = p?.name || 'FOUNDER';
+  const name = p?.name || p?.email || 'FOUNDER';
 
   document.getElementById('greeting-text').textContent =
     `${getGreeting()}, ${name.toUpperCase()}`;
@@ -650,6 +650,42 @@ async function runContentIntelligence() {
   }
 }
 
+// The webhook/LLM node can hand back the report in several shapes:
+//   data.report = { ...fields }            (expected)
+//   data.report = "{\"executiveSummary\":...}"  (stringified JSON — common in n8n)
+//   data.output / data.result wrapping the report
+//   the report fields sitting at the top level of `data` itself
+// Normalize all of these to a plain object so the section conditionals work.
+function coerceReport(data) {
+  const REPORT_KEYS = [
+    'executiveSummary', 'whatWorked', 'contentFormatAnalysis',
+    'contentIdeas', 'whatToAvoid', 'strategicRecommendations', 'captionAnalysis'
+  ];
+  const hasReportShape = obj =>
+    obj && typeof obj === 'object' && REPORT_KEYS.some(k => obj[k] != null);
+
+  const parse = val => {
+    if (typeof val !== 'string') return val;
+    try { return JSON.parse(val); } catch { return null; }
+  };
+
+  const candidates = [
+    parse(data.report),
+    data.report,
+    parse(data.output),
+    data.output,
+    parse(data.result),
+    data.result,
+    data
+  ];
+
+  for (const c of candidates) {
+    if (hasReportShape(c)) return c;
+  }
+  // Last resort: whatever report-like object we have, even if empty
+  return (data.report && typeof data.report === 'object') ? data.report : {};
+}
+
 function renderIntelReport(data) {
   const listEl = document.getElementById('ig-list');
 
@@ -660,7 +696,7 @@ function renderIntelReport(data) {
 
   const posts    = Array.isArray(data.posts) ? data.posts : [];
   const stats    = data.stats || {};
-  const report   = data.report || {};
+  const report   = coerceReport(data);
   const last7    = data.last7DaysTopPost || null;
   const topPost  = posts[0] || null;
 
@@ -718,8 +754,8 @@ function renderIntelReport(data) {
     `);
   }
 
-  // ─ D. LAST 7 DAYS ─
-  if (last7) {
+  // ─ D. LAST 7 DAYS ─ (skip if it's the same post as the top performer)
+  if (last7 && last7.url && last7.url !== topPost?.url) {
     sections.push(`
       <div class="intel-section">
         <div class="intel-post-block">
@@ -742,35 +778,130 @@ function renderIntelReport(data) {
     sections.push(reportListSection('TOP HOOKS', topHooks));
   }
 
-  // Content ideas
-  const ideas = Array.isArray(report.contentIdeas) ? report.contentIdeas : [];
-  if (ideas.length) {
-    const items = ideas.map(idea => {
-      const title = escapeHtml(idea?.title || idea?.name || '');
-      const hook  = escapeHtml(idea?.hook  || idea?.description || '');
-      return `<li>
-        <span class="intel-idea-title">${title}</span>
-        ${hook ? `<span class="intel-idea-hook">${hook}</span>` : ''}
-      </li>`;
-    }).join('');
+  // ─ A. WHAT WORKED ─
+  const whatWorked = report.whatWorked || {};
+  if (whatWorked.topPostBreakdown || whatWorked.audienceInsight || whatWorked.replicationFormula) {
+    const parts = [];
+    if (whatWorked.topPostBreakdown) {
+      parts.push(`
+        <div class="intel-subsection">
+          <div class="intel-sublabel">TOP POST BREAKDOWN</div>
+          <div class="intel-text">${escapeHtml(whatWorked.topPostBreakdown)}</div>
+        </div>
+      `);
+    }
+    if (whatWorked.audienceInsight) {
+      parts.push(`
+        <div class="intel-subsection">
+          <div class="intel-sublabel">AUDIENCE INSIGHT</div>
+          <div class="intel-text">${escapeHtml(whatWorked.audienceInsight)}</div>
+        </div>
+      `);
+    }
+    if (whatWorked.replicationFormula) {
+      parts.push(`
+        <div class="intel-subsection">
+          <div class="intel-sublabel">REPLICATION FORMULA</div>
+          <div class="intel-replication-box">${escapeHtml(whatWorked.replicationFormula)}</div>
+        </div>
+      `);
+    }
     sections.push(`
       <div class="intel-section">
-        <div class="intel-label">:: CONTENT IDEAS</div>
-        <ul class="intel-list">${items}</ul>
+        <div class="intel-label">:: WHAT WORKED</div>
+        ${parts.join('')}
       </div>
     `);
   }
 
-  // What to avoid (can be string or array)
+  // ─ B. CONTENT FORMAT ANALYSIS ─
+  const cfa = report.contentFormatAnalysis || {};
+  const topFormats = Array.isArray(cfa.topFormats) ? cfa.topFormats : [];
+  if (cfa.whatIsWorking || topFormats.length) {
+    const formatItems = topFormats.map(f => {
+      if (!f) return '';
+      const name      = escapeHtml(f.format || f.name || '');
+      const avg       = f.avgEngagement != null ? formatCount(f.avgEngagement) : '';
+      const insight   = escapeHtml(f.insight || '');
+      if (!name && !insight) return '';
+      return `
+        <li>
+          <span class="intel-idea-title">${name}${avg ? ` — ${avg}` : ''}</span>
+          ${insight ? `<span class="intel-idea-hook">${insight}</span>` : ''}
+        </li>
+      `;
+    }).filter(Boolean).join('');
+    sections.push(`
+      <div class="intel-section">
+        <div class="intel-label">:: CONTENT FORMAT ANALYSIS</div>
+        ${cfa.whatIsWorking ? `<div class="intel-text">${escapeHtml(cfa.whatIsWorking)}</div>` : ''}
+        ${formatItems ? `<ul class="intel-list">${formatItems}</ul>` : ''}
+      </div>
+    `);
+  }
+
+  // ─ C. CONTENT IDEAS ─ (each idea may use varying field names depending on the webhook run)
+  const ideas = Array.isArray(report.contentIdeas) ? report.contentIdeas : [];
+  const ideaItems = ideas.map(idea => {
+    if (!idea) return '';
+    const title = idea.title || idea.name || idea.idea || idea.concept || idea.headline || '';
+    const hook  = idea.hook || idea.openingLine || idea.description || idea.tagline || '';
+    const angle = idea.angle || idea.contentAngle || idea.format || '';
+    const why   = idea.whyItWillWork || idea.why || idea.reasoning || idea.rationale || '';
+    if (!title && !hook && !angle && !why) return '';
+    return `
+      <li>
+        ${title ? `<span class="intel-idea-title">${escapeHtml(title)}</span>` : ''}
+        ${hook  ? `<span class="intel-idea-hook">${escapeHtml(hook)}</span>` : ''}
+        ${angle ? `<div class="intel-idea-angle">${escapeHtml(angle)}</div>` : ''}
+        ${why   ? `<div class="intel-idea-why">▸ ${escapeHtml(why)}</div>` : ''}
+      </li>
+    `;
+  }).filter(Boolean).join('');
+  if (ideaItems) {
+    sections.push(`
+      <div class="intel-section">
+        <div class="intel-label">:: CONTENT IDEAS</div>
+        <ul class="intel-list">${ideaItems}</ul>
+      </div>
+    `);
+  }
+
+  // ─ D. WHAT TO AVOID ─ (object: {pattern, specificPosts, whyTheyFailed} — also tolerates legacy string/array shapes)
   if (report.whatToAvoid) {
-    if (Array.isArray(report.whatToAvoid)) {
-      sections.push(reportListSection('WHAT TO AVOID', report.whatToAvoid));
+    const wta = report.whatToAvoid;
+    if (Array.isArray(wta)) {
+      sections.push(reportListSection('WHAT TO AVOID', wta));
+    } else if (typeof wta === 'object') {
+      const parts = [];
+      if (wta.pattern) {
+        parts.push(`<div class="intel-text">${escapeHtml(wta.pattern)}</div>`);
+      }
+      const specificPosts = Array.isArray(wta.specificPosts)
+        ? wta.specificPosts.filter(Boolean)
+        : (typeof wta.specificPosts === 'string'
+            ? wta.specificPosts.split('\n').map(s => s.trim()).filter(Boolean)
+            : []);
+      if (specificPosts.length) {
+        parts.push(`<ul class="intel-list">${specificPosts.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`);
+      }
+      if (wta.whyTheyFailed) {
+        parts.push(`<div class="intel-text intel-avoid-why">${escapeHtml(wta.whyTheyFailed)}</div>`);
+      }
+      if (parts.length) {
+        sections.push(`
+          <div class="intel-section">
+            <div class="intel-label">:: WHAT TO AVOID</div>
+            ${parts.join('')}
+          </div>
+        `);
+      }
     } else {
-      sections.push(reportTextSection('WHAT TO AVOID', report.whatToAvoid));
+      sections.push(reportTextSection('WHAT TO AVOID', wta));
     }
   }
 
-  // Strategic recommendations
+  // ─ E. RECOMMENDATIONS ─
   const recs = Array.isArray(report.strategicRecommendations) ? report.strategicRecommendations : [];
   if (recs.length) {
     sections.push(reportListSection('RECOMMENDATIONS', recs));
@@ -811,7 +942,8 @@ function reportListSection(label, items) {
 }
 
 function renderPostBody(post) {
-  const caption  = post.caption || '(no caption)';
+  const rawCaption = post.caption || '(no caption)';
+  const caption  = rawCaption.length > 120 ? rawCaption.slice(0, 120).trimEnd() + '...' : rawCaption;
   const likes    = post.likes ?? post.likesCount;
   const views    = post.views ?? post.videoViewCount ?? post.videoPlayCount ?? post.playCount;
   const comments = post.comments ?? post.commentsCount;

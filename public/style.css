@@ -972,6 +972,31 @@ html, body {
 
 /* ── CONTENT INTELLIGENCE REPORT ──────────────────────────────────────────── */
 
+/* Panel scrolls internally — header/settings stay fixed, report scrolls */
+#ig-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 220px);
+}
+.ig-subtitle,
+.intel-settings { flex-shrink: 0; }
+.ig-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cyan) rgba(0, 229, 255, 0.04);
+}
+.ig-list::-webkit-scrollbar { width: 6px; }
+.ig-list::-webkit-scrollbar-track { background: rgba(0, 229, 255, 0.04); }
+.ig-list::-webkit-scrollbar-thumb {
+  background: var(--cyan);
+  opacity: 0.5;
+  box-shadow: 0 0 6px rgba(0, 229, 255, 0.5);
+}
+.ig-list::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+
 /* Settings — two stacked rows */
 .intel-settings { flex-direction: column; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--cyan-border); margin-bottom: 12px; }
 .intel-settings-row { display: flex; gap: 6px; align-items: stretch; }
@@ -1163,6 +1188,40 @@ html, body {
   margin-top: 3px;
   font-style: italic;
 }
+.intel-idea-angle {
+  color: var(--text);
+  font-size: 10.5px;
+  line-height: 1.5;
+  margin-top: 5px;
+}
+.intel-idea-why {
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+/* WHAT WORKED — sub-sections inside :: WHAT WORKED */
+.intel-subsection { margin-top: 10px; }
+.intel-subsection:first-child { margin-top: 0; }
+.intel-sublabel {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.intel-replication-box {
+  background: rgba(0, 229, 255, 0.05);
+  border-left: 2px solid var(--cyan);
+  padding: 12px;
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* WHAT TO AVOID — failure-reason tint */
+.intel-avoid-why { color: #ff6b35; }
 
 /* ERROR STATE */
 .intel-error {
