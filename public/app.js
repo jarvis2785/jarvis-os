@@ -694,6 +694,9 @@ function renderIntelReport(data) {
     return;
   }
 
+  // Expose the latest report so the JARVIS chat terminal can query it.
+  window.lastIntelReport = data;
+
   const posts    = Array.isArray(data.posts) ? data.posts : [];
   const stats    = data.stats || {};
   const report   = coerceReport(data);
@@ -744,11 +747,14 @@ function renderIntelReport(data) {
 
   // ─ C. TOP PERFORMER ─
   if (topPost) {
+    // The Whisper-transcribed hook for the top post specifically lives on
+    // report.topPerformingPosts[0]; fall back to the post's own spokenHook field.
+    const topSpokenHook = report.topPerformingPosts?.[0]?.spokenHook || topPost.spokenHook || '';
     sections.push(`
       <div class="intel-section">
         <div class="intel-post-block">
           <div class="intel-post-tag">// TOP PERFORMER</div>
-          ${renderPostBody(topPost)}
+          ${renderPostBody(topPost, topSpokenHook)}
         </div>
       </div>
     `);
@@ -801,7 +807,7 @@ function renderIntelReport(data) {
     if (whatWorked.replicationFormula) {
       parts.push(`
         <div class="intel-subsection">
-          <div class="intel-sublabel">REPLICATION FORMULA</div>
+          <div class="intel-sublabel intel-sublabel-cyan">REPLICATION FORMULA</div>
           <div class="intel-replication-box">${escapeHtml(whatWorked.replicationFormula)}</div>
         </div>
       `);
@@ -941,15 +947,22 @@ function reportListSection(label, items) {
   `;
 }
 
-function renderPostBody(post) {
+function renderPostBody(post, spokenHookOverride) {
   const rawCaption = post.caption || '(no caption)';
   const caption  = rawCaption.length > 120 ? rawCaption.slice(0, 120).trimEnd() + '...' : rawCaption;
   const likes    = post.likes ?? post.likesCount;
   const views    = post.views ?? post.videoViewCount ?? post.videoPlayCount ?? post.playCount;
   const comments = post.comments ?? post.commentsCount;
   const url      = post.url || '#';
+  // Prefer the Whisper-transcribed hook passed in; fall back to the post's own field
+  const spokenHook = String(spokenHookOverride || post.spokenHook || '').trim();
   return `
     <div class="intel-post-caption">${escapeHtml(caption)}</div>
+    ${spokenHook ? `
+      <div class="intel-spoken-hook">
+        <div class="intel-spoken-label">// SPOKEN HOOK</div>
+        <div class="intel-spoken-text">${escapeHtml(spokenHook)}</div>
+      </div>` : ''}
     <div class="intel-post-stats">
       ${views    != null ? `<span><span class="num">${formatCount(views)}</span> VIEWS</span>` : ''}
       ${likes    != null ? `<span><span class="num">${formatCount(likes)}</span> LIKES</span>` : ''}
@@ -1338,50 +1351,269 @@ function speakText(text) {
   }
 }
 
-async function sendChat() {
-  const input = document.getElementById('chat-input');
-  const message = input.value.trim();
-  if (!message || !STATE.userId) return;
+// ── TYPING INDICATOR ──────────────────────────────────────────────────────────
+function showTypingIndicator() {
+  const history = document.getElementById('chat-history');
+  if (document.getElementById('chat-typing')) return;
+  const div = document.createElement('div');
+  div.className = 'chat-msg jarvis typing';
+  div.id = 'chat-typing';
+  div.innerHTML = `<span class="chat-prefix">JARVIS ▸</span><span class="typing-dots"><span></span><span></span><span></span></span>`;
+  history.appendChild(div);
+  history.scrollTop = history.scrollHeight;
+}
+function removeTypingIndicator() {
+  document.getElementById('chat-typing')?.remove();
+}
 
-  input.value = '';
+// ── JARVIS COMMAND CENTER ─────────────────────────────────────────────────────
+// The terminal detects intent from natural language / voice and either operates
+// a dashboard panel directly or falls back to the Groq AI for open-ended queries.
+
+const JARVIS_SYSTEM_PROMPT = "You are JARVIS, the AI assistant inside JARVIS OS — a founder command center built by Shaan Soni. You are Tony Stark's JARVIS but for founders. You are sharp, direct, intelligent, occasionally witty. You address the user as 'sir'. You help with business strategy, content, AI systems, and productivity. Keep responses concise and actionable. Never be generic.";
+
+function parseTimeToHHMM(str) {
+  const m = String(str).trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!m) return '';
+  let h = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const ap = m[3];
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  if (h > 23 || min > 59) return '';
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+function detectIntent(raw) {
+  const m = raw.toLowerCase().trim();
+
+  // ── CALENDAR: add task / event / reminder ──
+  const addMatch = m.match(/\badd\s+(?:a\s+|an\s+)?(task|event|reminder|meeting)\b(.*)/);
+  if (addMatch || /^remind me to\b/.test(m)) {
+    let itemType = 'task';
+    let rest = '';
+    if (addMatch) {
+      itemType = (addMatch[1] === 'event' || addMatch[1] === 'meeting') ? 'event' : 'task';
+      rest = addMatch[2] || '';
+    } else {
+      rest = m.replace(/^remind me to\b/, '');
+    }
+    let time = '';
+    const timeMatch = rest.match(/\bat\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/);
+    if (timeMatch) {
+      time = parseTimeToHHMM(timeMatch[1]);
+      rest = rest.replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?/, '');
+    }
+    rest = rest.replace(/\b(today|tonight|tomorrow|please|now)\b/g, '');
+    let text = rest.replace(/^[\s:,\-]*(?:called|named|titled|to)?[\s:,\-]*/, '').replace(/\s{2,}/g, ' ').trim();
+    if (text) text = text.charAt(0).toUpperCase() + text.slice(1);
+    return { type: 'calendar-add', itemType, text, time };
+  }
+
+  // ── CALENDAR: query schedule (don't steal content questions) ──
+  const isContenty = /post|create|content|instagram|reel/.test(m);
+  if (!isContenty && (/\b(schedule|agenda)\b/.test(m) || /what do i have/.test(m) ||
+      /\bwhat'?s\b.*\b(today|on (my )?(plate|schedule|agenda)|going on)\b/.test(m))) {
+    return { type: 'calendar-query' };
+  }
+
+  // ── CONTENT: what should I post ──
+  if (/what (should|do|can) i post/.test(m) || /what to post/.test(m)) {
+    return { type: 'report-whattopost' };
+  }
+  // ── CONTENT: top / best post ──
+  if (/\b(top|best)\b[^.]*\bpost\b/.test(m) || /performed best|best performing|what performed/.test(m)) {
+    return { type: 'report-toppost' };
+  }
+  // ── CONTENT: content ideas ──
+  if (/content idea|what should i create|give me (content )?ideas|ideas to (post|make|create)/.test(m)) {
+    return { type: 'report-ideas' };
+  }
+  // ── CONTENT: analyze / run intelligence ──
+  if (/\b(analy[sz]e|content intelligence|run content)\b/.test(m) ||
+      /what'?s working on my (instagram|account|reels)/.test(m)) {
+    let username = '';
+    if (!/\bmy (instagram|account|reels|content|profile)\b/.test(m)) {
+      const um = m.match(/(?:analy[sz]e|scan|on|for|intelligence(?:\s+on|\s+for)?)\s+@?([a-z0-9._]+)/);
+      if (um) username = um[1];
+    }
+    return { type: 'content-analyze', username };
+  }
+
+  // ── NEWS ──
+  if (/\bnews\b|\barticles?\b|\bheadlines?\b/.test(m)) {
+    let topic = '';
+    const t1 = m.match(/news (?:about|on|regarding|for|of)\s+(.+)/);
+    const t2 = m.match(/(?:fetch|get|show me|latest|pull up|find)\s+(.+?)\s+news/);
+    const t3 = m.match(/(?:articles?|headlines?) (?:about|on|for)\s+(.+)/);
+    if (t1) topic = t1[1];
+    else if (t2) topic = t2[1];
+    else if (t3) topic = t3[1];
+    topic = (topic || '').replace(/[?.!]+$/, '').replace(/\b(please|now|today)\b/g, '').trim();
+    return { type: 'news', topic };
+  }
+
+  return { type: 'groq' };
+}
+
+// ── Intent handlers (return the JARVIS reply string) ──
+async function handleNewsCmd(topic) {
+  if (topic) {
+    lsSet(LS.TOPIC1, topic);
+    document.getElementById('news-title-1').textContent = `NEWS FEED 01 — ${topic.toUpperCase()}`;
+  }
+  const current = lsGet(LS.TOPIC1);
+  if (!current) return 'No topic set, sir. Tell me what to pull — for example, "news about AI startups".';
+  loadNews(1);
+  return `Fetching intelligence on ${current}, sir.`;
+}
+
+function handleAnalyzeCmd(username) {
+  const uEl = document.getElementById('ig-username-input');
+  const gEl = document.getElementById('ig-groq-input');
+  const uname = String(username || uEl.value || '').replace(/^@/, '').trim();
+  if (!uname) return 'I need a target handle to scan, sir. Try "analyze nike".';
+  uEl.value = uname;
+  if (!gEl.value) gEl.value = lsGet(LS.GROQ);
+  runContentIntelligence();
+  return `Initiating content scan on @${uname}, sir. Give me roughly thirty seconds.`;
+}
+
+function handleScheduleQuery() {
+  const today = TODAY_STR();
+  const items = STATE.agenda
+    .filter(i => i.date === today)
+    .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+  if (!items.length) return 'Your schedule is clear for today, sir. Nothing on the books.';
+  const lines = items.map(i => {
+    const t = i.time ? ` at ${i.time}` : '';
+    const kind = i.type === 'event' ? 'Event' : 'Task';
+    const status = i.done ? ' (done)' : '';
+    return `• ${kind}: ${i.text}${t}${status}`;
+  });
+  return `Here is your agenda for today, sir:\n${lines.join('\n')}`;
+}
+
+function handleAddAgendaCmd(intent) {
+  if (!intent.text) return 'What would you like me to add, sir?';
+  document.getElementById('agenda-input').value = intent.text;
+  document.getElementById('agenda-date').value  = TODAY_STR();
+  document.getElementById('agenda-time').value  = intent.time || '';
+  STATE.agendaTypeSelected = intent.itemType;
+  document.querySelectorAll('.type-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.type === intent.itemType));
+  addAgendaItem();
+  const when = intent.time ? ` at ${intent.time}` : '';
+  return `Adding ${intent.itemType} "${intent.text}"${when} to your schedule, sir.`;
+}
+
+function handleTopPost() {
+  const data = window.lastIntelReport;
+  if (!data) return 'No content report loaded yet, sir. Run an analysis first — try "analyze [username]".';
+  const post = (data.posts || [])[0];
+  if (!post) return 'The last report had no posts to rank, sir.';
+  const caption = (post.caption || '(no caption)').slice(0, 140);
+  const views = post.views ?? post.videoViewCount ?? post.videoPlayCount ?? post.playCount;
+  const likes = post.likes ?? post.likesCount;
+  const stats = [];
+  if (views != null) stats.push(`${formatCount(views)} views`);
+  if (likes != null) stats.push(`${formatCount(likes)} likes`);
+  return `Your top performer, sir: "${caption}"${stats.length ? ` — ${stats.join(', ')}.` : '.'}`;
+}
+
+function handleContentIdeas() {
+  const report = window.lastIntelReport ? coerceReport(window.lastIntelReport) : {};
+  const ideas = Array.isArray(report.contentIdeas) ? report.contentIdeas : [];
+  if (!ideas.length) return 'No content ideas on record, sir. Run an analysis and I will generate some.';
+  const lines = ideas.slice(0, 5).map((idea, i) => {
+    const title = idea.title || idea.name || idea.idea || idea.concept || `Idea ${i + 1}`;
+    const hook  = idea.hook || idea.openingLine || '';
+    return `${i + 1}. ${title}${hook ? ` — "${hook}"` : ''}`;
+  });
+  return `Here is what I would create next, sir:\n${lines.join('\n')}`;
+}
+
+function handleWhatToPost() {
+  const report = window.lastIntelReport ? coerceReport(window.lastIntelReport) : {};
+  const ideas = Array.isArray(report.contentIdeas) ? report.contentIdeas : [];
+  if (!ideas.length) return 'I have no fresh report to pull from, sir. Run "analyze [username]" and I will tell you exactly what to post.';
+  const top = ideas[0];
+  const title = top.title || top.name || top.idea || top.concept || 'your next post';
+  const hook  = top.hook || top.openingLine || '';
+  const angle = top.angle || top.contentAngle || '';
+  let r = `My pick for your next post, sir: "${title}".`;
+  if (hook)  r += ` Open with: "${hook}".`;
+  if (angle) r += ` Angle — ${angle}`;
+  return r;
+}
+
+async function callGroqDirect(message) {
+  const key = lsGet(LS.GROQ);
+  if (!key) throw new Error('Groq key not set. Add it in RECONFIGURE.');
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: JARVIS_SYSTEM_PROMPT },
+        ...STATE.chatHistory.slice(-10)
+      ],
+      max_tokens: 400,
+      temperature: 0.7
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Groq API error');
+  return data.choices?.[0]?.message?.content || 'No response.';
+}
+
+async function sendChat(rawMessage) {
+  const input   = document.getElementById('chat-input');
+  const message = String(rawMessage != null ? rawMessage : input.value).trim();
+  if (!message) return;
+
+  if (rawMessage == null) input.value = '';
   appendChatMsg('user', message);
-
   STATE.chatHistory.push({ role: 'user', content: message });
 
   const btn = document.getElementById('btn-send-chat');
   btn.disabled = true;
   btn.textContent = '...';
   startProcessingSound();
+  showTypingIndicator();
 
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId:   STATE.userId,
-        message,
-        history:  STATE.chatHistory.slice(-10),
-        groq_key: lsGet(LS.GROQ)
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    const intent = detectIntent(message);
+    let reply;
+    switch (intent.type) {
+      case 'news':               reply = await handleNewsCmd(intent.topic); break;
+      case 'content-analyze':    reply = handleAnalyzeCmd(intent.username);  break;
+      case 'calendar-query':     reply = handleScheduleQuery();              break;
+      case 'calendar-add':       reply = handleAddAgendaCmd(intent);         break;
+      case 'report-toppost':     reply = handleTopPost();                    break;
+      case 'report-ideas':       reply = handleContentIdeas();               break;
+      case 'report-whattopost':  reply = handleWhatToPost();                 break;
+      default:                   reply = await callGroqDirect(message);
+    }
 
+    removeTypingIndicator();
     stopProcessingSound();
     playJarvisChime();
-    appendChatMsg('jarvis', data.reply);
-    STATE.chatHistory.push({ role: 'assistant', content: data.reply });
-    speakText(data.reply);
+    appendChatMsg('jarvis', reply);
+    STATE.chatHistory.push({ role: 'assistant', content: reply });
+    speakText(reply);
   } catch (err) {
+    removeTypingIndicator();
     stopProcessingSound();
-    appendChatMsg('system-msg', `ERROR: ${err.message.toUpperCase()}`);
+    appendChatMsg('error', `ERROR: ${String(err.message || err).toUpperCase()}`);
   } finally {
     btn.disabled = false;
     btn.textContent = 'SEND';
   }
 }
 
-document.getElementById('btn-send-chat').addEventListener('click', sendChat);
+document.getElementById('btn-send-chat').addEventListener('click', () => sendChat());
 document.getElementById('chat-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') sendChat();
 });
@@ -1390,21 +1622,74 @@ document.getElementById('btn-clr-chat').addEventListener('click', () => {
   STATE.chatHistory = [];
 });
 
-// ── VOICE TOGGLE ──────────────────────────────────────────────────────────────
+// ── VOICE OUTPUT TOGGLE (TTS mute) ────────────────────────────────────────────
 document.getElementById('btn-toggle-voice').addEventListener('click', () => {
   STATE.voiceEnabled = !STATE.voiceEnabled;
-  const indicator = document.getElementById('voice-status');
   const btn = document.getElementById('btn-toggle-voice');
   if (STATE.voiceEnabled) {
-    indicator.textContent = '◉ VOICE ON';
-    indicator.classList.remove('muted');
     btn.textContent = 'MUTE';
-    window.speechSynthesis?.cancel();
+    btn.classList.remove('muted');
   } else {
-    indicator.textContent = '○ VOICE OFF';
-    indicator.classList.add('muted');
     btn.textContent = 'UNMUTE';
+    btn.classList.add('muted');
     window.speechSynthesis?.cancel();
+  }
+});
+
+// ── VOICE INPUT (SpeechRecognition) ───────────────────────────────────────────
+// Clicking the "VOICE ON" indicator starts listening; the transcript is dropped
+// into the input and auto-sent.
+let jarvisRecognition = null;
+let jarvisListening   = false;
+
+function updateMicUI() {
+  const ind = document.getElementById('voice-status');
+  if (jarvisListening) {
+    ind.textContent = '◉ LISTENING';
+    ind.classList.add('listening');
+  } else {
+    ind.textContent = '◉ VOICE ON';
+    ind.classList.remove('listening');
+  }
+}
+
+function setupSpeechRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+  const rec = new SR();
+  rec.lang = 'en-US';
+  rec.continuous = false;
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  rec.onresult = (e) => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join(' ').trim();
+    if (transcript) {
+      document.getElementById('chat-input').value = transcript;
+      sendChat();
+    }
+  };
+  rec.onerror = () => { jarvisListening = false; updateMicUI(); };
+  rec.onend   = () => { jarvisListening = false; updateMicUI(); };
+  return rec;
+}
+
+document.getElementById('voice-status').addEventListener('click', () => {
+  if (!jarvisRecognition) jarvisRecognition = setupSpeechRecognition();
+  if (!jarvisRecognition) {
+    appendChatMsg('error', 'VOICE INPUT NOT SUPPORTED IN THIS BROWSER');
+    return;
+  }
+  if (jarvisListening) {
+    jarvisRecognition.stop();
+    jarvisListening = false;
+    updateMicUI();
+  } else {
+    try {
+      jarvisRecognition.start();
+      jarvisListening = true;
+      updateMicUI();
+      playClick();
+    } catch (_) { /* start() throws if already running — ignore */ }
   }
 });
 

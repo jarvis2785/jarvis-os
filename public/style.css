@@ -791,8 +791,20 @@ html, body {
   letter-spacing: 1.5px;
   color: var(--green);
   text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.2s, text-shadow 0.2s;
+  user-select: none;
 }
+.voice-indicator:hover { color: var(--cyan); text-shadow: 0 0 8px rgba(0, 229, 255, 0.5); }
 .voice-indicator.muted { color: var(--text-dim); }
+.voice-indicator.listening {
+  color: #ff6b35;
+  animation: voice-pulse 1s infinite;
+}
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1;   text-shadow: 0 0 8px rgba(255, 107, 53, 0.7); }
+  50%      { opacity: 0.45; text-shadow: none; }
+}
 #chat-history {
   height: 200px;
   overflow-y: auto;
@@ -825,6 +837,33 @@ html, body {
   text-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
 }
 .chat-msg.system-msg { color: var(--text-dim); font-size: 10px; text-align: center; letter-spacing: 1px; }
+.chat-msg.error {
+  color: #ff6b35;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-shadow: 0 0 6px rgba(255, 107, 53, 0.3);
+}
+.chat-msg.jarvis { white-space: pre-wrap; }
+.chat-msg.typing .typing-dots {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  vertical-align: middle;
+}
+.chat-msg.typing .typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
+  animation: typing-bounce 1.2s infinite;
+}
+.chat-msg.typing .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.chat-msg.typing .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing-bounce {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30%           { opacity: 1;   transform: translateY(-3px); }
+}
 .chat-input-row {
   display: flex;
   align-items: center;
@@ -1182,11 +1221,12 @@ html, body {
   letter-spacing: 0.5px;
 }
 .intel-idea-hook {
-  color: var(--text-dim);
-  font-size: 10px;
+  color: var(--cyan);
+  font-size: 12px;
   display: block;
   margin-top: 3px;
   font-style: italic;
+  text-shadow: 0 0 6px rgba(0, 229, 255, 0.3);
 }
 .intel-idea-angle {
   color: var(--text);
@@ -1211,6 +1251,10 @@ html, body {
   text-transform: uppercase;
   margin-bottom: 5px;
 }
+.intel-sublabel-cyan {
+  color: var(--cyan);
+  text-shadow: 0 0 6px rgba(0, 229, 255, 0.4);
+}
 .intel-replication-box {
   background: rgba(0, 229, 255, 0.05);
   border-left: 2px solid var(--cyan);
@@ -1218,6 +1262,27 @@ html, body {
   font-size: 11px;
   color: var(--text);
   line-height: 1.6;
+}
+
+/* SPOKEN HOOK — Whisper-transcribed opening line inside TOP PERFORMER / LAST 7 DAYS */
+.intel-spoken-hook { margin-bottom: 10px; }
+.intel-spoken-label {
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--cyan);
+  text-transform: uppercase;
+  margin-bottom: 5px;
+  text-shadow: 0 0 6px rgba(0, 229, 255, 0.5);
+  font-weight: 600;
+}
+.intel-spoken-text {
+  font-style: italic;
+  color: #a0aec0;
+  font-size: 12px;
+  line-height: 1.5;
+  border-left: 2px solid var(--cyan);
+  padding: 8px 12px;
+  background: rgba(0, 229, 255, 0.03);
 }
 
 /* WHAT TO AVOID — failure-reason tint */
