@@ -22,7 +22,9 @@ const LS = {
   GROQ:     'jarvis_groq',
   TAVILY:   'jarvis_tavily',
   APIFY:    'jarvis_apify',
-  agenda:   uid => `jarvis_agenda_${uid}`,
+  SCRAPEBOT:       'jarvis_scrapebot',
+  CONFIG_COMPLETE: 'jarvis_config_complete',
+  agenda:          uid => `jarvis_agenda_${uid}`,
   chat:     uid => `jarvis_chat_${uid}`
 };
 
@@ -236,11 +238,12 @@ function saveSession(userId, accessToken) {
 
 function clearSession() {
   lsRemove(
-    LS.SESSION, LS.TOPIC1, LS.TOPIC2,
-    LS.GROQ, LS.TAVILY, LS.APIFY,
+    LS.SESSION, LS.CONFIG_COMPLETE,
     LS.agenda(STATE.userId || ''),
     LS.chat(STATE.userId || '')
   );
+  // API keys (GROQ, TAVILY, APIFY, SCRAPEBOT) and topics (TOPIC1, TOPIC2) are
+  // intentionally kept so the user doesn't have to re-enter them on every login.
 }
 
 function getSavedSession() {
@@ -268,7 +271,9 @@ async function tryRestoreSession() {
     STATE.profile = data.profile;  // { id, name, email, niche }
     saveSession(data.user.id, saved.accessToken);
 
-    if (data.hasProfile) {
+    const keysExist = lsGet(LS.GROQ) && lsGet(LS.TAVILY) && lsGet(LS.APIFY) && lsGet(LS.SCRAPEBOT);
+    if (keysExist) lsSet(LS.CONFIG_COMPLETE, 'true');
+    if (data.hasProfile && keysExist) {
       await initDashboard();
       transitionTo('screen-dashboard');
     } else {
@@ -333,7 +338,9 @@ async function handleSignIn() {
     STATE.profile = data.profile;  // { id, name, email, niche }
     saveSession(data.user.id, data.session.access_token);
 
-    if (data.hasProfile) {
+    const keysExist = lsGet(LS.GROQ) && lsGet(LS.TAVILY) && lsGet(LS.APIFY) && lsGet(LS.SCRAPEBOT);
+    if (keysExist) lsSet(LS.CONFIG_COMPLETE, 'true');
+    if (data.hasProfile && keysExist) {
       await initDashboard();
       transitionTo('screen-dashboard');
     } else {
@@ -410,48 +417,78 @@ document.getElementById('signup-confirm').addEventListener('keydown', e => {
   if (e.key === 'Enter') handleSignUp();
 });
 
+// ── PROFILE FIELD VALIDATION ──────────────────────────────────────────────────
+const PROFILE_FIELDS = [
+  { id: 'profile-niche'     },
+  { id: 'profile-topic1'    },
+  { id: 'profile-topic2'    },
+  { id: 'profile-groq'      },
+  { id: 'profile-tavily'    },
+  { id: 'profile-apify'     },
+  { id: 'profile-scrapebot' }
+];
+
+function clearProfileFieldErrors() {
+  PROFILE_FIELDS.forEach(({ id }) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('field-error');
+    document.getElementById(`err-${id}`)?.remove();
+  });
+}
+
+function validateProfileForm() {
+  clearProfileFieldErrors();
+  let valid = true;
+  PROFILE_FIELDS.forEach(({ id }) => {
+    const el = document.getElementById(id);
+    if (!el || el.value.trim()) return;
+    el.classList.add('field-error');
+    const errDiv = document.createElement('div');
+    errDiv.className = 'field-error-msg';
+    errDiv.id = `err-${id}`;
+    errDiv.textContent = 'This field is required';
+    el.insertAdjacentElement('afterend', errDiv);
+    valid = false;
+  });
+  return valid;
+}
+
 // ── PROFILE SETUP ─────────────────────────────────────────────────────────────
 document.getElementById('btn-save-profile').addEventListener('click', async () => {
-  const niche     = document.getElementById('profile-niche').value.trim();
-  const topic1    = document.getElementById('profile-topic1').value.trim();
-  const topic2    = document.getElementById('profile-topic2').value.trim();
-  const groqKey   = document.getElementById('profile-groq').value.trim();
-  const tavilyKey = document.getElementById('profile-tavily').value.trim();
-  const apifyKey  = document.getElementById('profile-apify').value.trim();
-  const errEl     = document.getElementById('profile-error');
+  if (!validateProfileForm()) return;
 
-  if (!niche || !topic1 || !topic2 || !groqKey || !tavilyKey) {
-    errEl.textContent = 'NICHE, TOPICS, GROQ KEY AND TAVILY KEY ARE REQUIRED.';
-    return;
-  }
-  errEl.textContent = '';
+  const niche        = document.getElementById('profile-niche').value.trim();
+  const topic1       = document.getElementById('profile-topic1').value.trim();
+  const topic2       = document.getElementById('profile-topic2').value.trim();
+  const groqKey      = document.getElementById('profile-groq').value.trim();
+  const tavilyKey    = document.getElementById('profile-tavily').value.trim();
+  const apifyKey     = document.getElementById('profile-apify').value.trim();
+  const scrapebotKey = document.getElementById('profile-scrapebot').value.trim();
+  const errEl        = document.getElementById('profile-error');
+  errEl.textContent  = '';
 
   const btn = document.getElementById('btn-save-profile');
   btn.classList.add('loading');
   btn.textContent = 'INITIALIZING';
 
   try {
-    // Save only niche to Supabase
     const res = await fetch('/api/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: STATE.userId,
-        name:   STATE.profile?.name || '',
-        niche
-      })
+      body: JSON.stringify({ userId: STATE.userId, name: STATE.profile?.name || '', niche })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
 
-    STATE.profile = data.profile;  // { id, name, email, niche }
+    STATE.profile = data.profile;
 
-    // Save everything else to localStorage
-    lsSet(LS.TOPIC1,  topic1);
-    lsSet(LS.TOPIC2,  topic2);
-    lsSet(LS.GROQ,    groqKey);
-    lsSet(LS.TAVILY,  tavilyKey);
-    if (apifyKey) lsSet(LS.APIFY, apifyKey);
+    lsSet(LS.TOPIC1,          topic1);
+    lsSet(LS.TOPIC2,          topic2);
+    lsSet(LS.GROQ,            groqKey);
+    lsSet(LS.TAVILY,          tavilyKey);
+    lsSet(LS.APIFY,           apifyKey);
+    lsSet(LS.SCRAPEBOT,       scrapebotKey);
+    lsSet(LS.CONFIG_COMPLETE, 'true');
 
     await initDashboard();
     transitionTo('screen-dashboard');
@@ -500,13 +537,15 @@ async function initDashboard() {
 
 // ── RECONFIGURE ───────────────────────────────────────────────────────────────
 document.getElementById('btn-reconfigure').addEventListener('click', () => {
+  clearProfileFieldErrors();
   transitionTo('screen-profile');
-  document.getElementById('profile-niche').value   = STATE.profile?.niche   || '';
-  document.getElementById('profile-topic1').value  = lsGet(LS.TOPIC1);
-  document.getElementById('profile-topic2').value  = lsGet(LS.TOPIC2);
-  document.getElementById('profile-groq').value    = '';
-  document.getElementById('profile-tavily').value  = '';
-  document.getElementById('profile-apify').value   = '';
+  document.getElementById('profile-niche').value     = STATE.profile?.niche || '';
+  document.getElementById('profile-topic1').value    = lsGet(LS.TOPIC1);
+  document.getElementById('profile-topic2').value    = lsGet(LS.TOPIC2);
+  document.getElementById('profile-groq').value      = lsGet(LS.GROQ);
+  document.getElementById('profile-tavily').value    = lsGet(LS.TAVILY);
+  document.getElementById('profile-apify').value     = lsGet(LS.APIFY);
+  document.getElementById('profile-scrapebot').value = lsGet(LS.SCRAPEBOT);
 });
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
@@ -576,14 +615,53 @@ async function loadNews(feedNum) {
     });
     setNewsDotOnline();
   } catch (err) {
-    listEl.innerHTML = `<div class="loading-text">ERROR: ${escapeHtml(err.message)}</div>`;
+    const msg = String(err.message || err);
+    if (isExhaustedError(msg)) {
+      listEl.innerHTML = `<div class="loading-text">${escapeHtml(exhaustedMessage('tavily'))}</div>`;
+    } else {
+      listEl.innerHTML = `<div class="loading-text">ERROR: ${escapeHtml(msg)}</div>`;
+    }
   }
 }
 
 document.getElementById('refresh-news-1').addEventListener('click', () => loadNews(1));
 
+// ── API KEY ERROR HELPERS ─────────────────────────────────────────────────────
+// Where to regenerate each provider's key (shown when a key is exhausted).
+const KEY_HELP = {
+  groq:      { label: 'Groq',        url: 'console.groq.com' },
+  apify:     { label: 'Apify',       url: 'apify.com/account/integrations' },
+  scrapebot: { label: 'ScrapingBot', url: 'scrapingbot.io/dashboard' },
+  tavily:    { label: 'Tavily',      url: 'tavily.com/dashboard' }
+};
+
+// True when an error string looks like a rate-limit / quota / exhausted-key failure.
+function isExhaustedError(text) {
+  return /\b(limit|quota|exhausted|rate|insufficient|exceeded|403|429)\b/i.test(String(text || ''));
+}
+
+// Best-effort guess at which provider an error came from, based on its text.
+function detectKeyService(text) {
+  const t = String(text || '').toLowerCase();
+  if (t.includes('scrapingbot') || t.includes('scraping bot') || t.includes('scrapebot') || t.includes('scraping_bot')) return 'scrapebot';
+  if (t.includes('apify'))  return 'apify';
+  if (t.includes('groq'))   return 'groq';
+  if (t.includes('tavily')) return 'tavily';
+  return null;
+}
+
+// Builds the user-facing "key exhausted" message for a given provider (or a
+// generic one when the provider can't be determined from the error).
+function exhaustedMessage(service) {
+  const info = KEY_HELP[service];
+  if (!info) {
+    return '⚠ API KEY EXHAUSTED — One of your API keys has hit its limit. Check your Groq, Apify and ScrapingBot keys in System Configuration and regenerate whichever has run out.';
+  }
+  return `⚠ API KEY EXHAUSTED — Your ${info.label} API key has hit its limit. Generate a new key at ${info.url} and update it in System Configuration.`;
+}
+
 // ── CONTENT INTELLIGENCE ──────────────────────────────────────────────────────
-const CONTENT_INTEL_WEBHOOK = 'http://localhost:5678/webhook/content-intelligence';
+const CONTENT_INTEL_WEBHOOK = 'https://423b-103-250-165-36.ngrok-free.app/webhook/content-intelligence';
 
 document.getElementById('btn-analyze').addEventListener('click', runContentIntelligence);
 ['ig-username-input', 'ig-limit-input', 'ig-groq-input'].forEach(id => {
@@ -596,16 +674,20 @@ async function runContentIntelligence() {
   const listEl = document.getElementById('ig-list');
   const btn    = document.getElementById('btn-analyze');
 
+  // Guard: both required keys must be configured before scanning
+  const groqLs      = lsGet(LS.GROQ);
+  const scrapebotLs = lsGet(LS.SCRAPEBOT);
+  if (!groqLs || !scrapebotLs) {
+    showIntelError('⚠ KEYS NOT CONFIGURED — Click RECONFIGURE in the top right to set up your API keys.');
+    return;
+  }
+
   const username = document.getElementById('ig-username-input').value.trim().replace(/^@/, '');
   const limit    = Math.max(1, Math.min(50, parseInt(document.getElementById('ig-limit-input').value, 10) || 10));
-  const groqKey  = document.getElementById('ig-groq-input').value.trim();
+  const groqKey  = document.getElementById('ig-groq-input').value.trim() || groqLs;
 
   if (!username) {
     listEl.innerHTML = '<div class="intel-error">// USERNAME REQUIRED</div>';
-    return;
-  }
-  if (!groqKey) {
-    listEl.innerHTML = '<div class="intel-error">// GROQ KEY REQUIRED</div>';
     return;
   }
 
@@ -629,25 +711,57 @@ async function runContentIntelligence() {
         limit,
         resultsType: 'reels',
         contentType: 'all',
-        groq_key:    groqKey
+        // All third-party keys come straight from localStorage — never hardcoded.
+        groq_key:      lsGet(LS.GROQ),
+        scrapebot_key: lsGet(LS.SCRAPEBOT),
+        apify_key:     lsGet(LS.APIFY)
       })
     });
 
     if (!res.ok) {
       const txt = await res.text();
-      listEl.innerHTML = `<div class="intel-error">// CONNECTION FAILED — ${escapeHtml(txt.slice(0, 100) || res.statusText)}</div>`;
+      showIntelError(`${res.status} ${res.statusText} ${txt}`);
       return;
     }
 
     const data = await res.json();
+    // Webhook can report failure in-band (success:false) — show the raw message
+    // exactly as n8n sent it, no classification or template replacement.
+    if (data && data.success === false) {
+      const msg = data.error || data.message || 'Analysis failed';
+      document.getElementById('ig-list').innerHTML =
+        `<div class="intel-error">${escapeHtml(msg)}</div>`;
+      return;
+    }
     renderIntelReport(data);
   } catch (err) {
-    listEl.innerHTML = `<div class="intel-error">// CONNECTION FAILED — CHECK WEBHOOK</div>`;
+    showIntelError(err.message, true);
     console.error('Content Intelligence error:', err);
   } finally {
     btn.classList.remove('loading');
     btn.textContent = 'ANALYZE';
   }
+}
+
+function classifyIntelError(text, isNetwork) {
+  if (isNetwork) {
+    return '⚠ WEBHOOK OFFLINE — n8n is not running. Start your n8n instance and try again.';
+  }
+  const t = String(text || '');
+  if (/\b(401|403|invalid.?key|unauthorized|forbidden)\b/i.test(t)) {
+    return '⚠ API KEY INVALID — Your Groq or ScrapingBot key is invalid. Click RECONFIGURE to update your keys.';
+  }
+  if (/\b(429|rate.?limit|quota|exhausted|limit.?exceeded)\b/i.test(t)) {
+    return '⚠ API KEY EXHAUSTED — Your key has hit its usage limit. Get a new key and click RECONFIGURE.\n→ Groq: console.groq.com\n→ ScrapingBot: scrapingbot.io/dashboard\n→ Apify: apify.com/account/integrations';
+  }
+  const display = t.trim().slice(0, 200) || 'Unknown error';
+  return `⚠ ANALYSIS FAILED — ${display}`;
+}
+
+function showIntelError(text, isNetwork) {
+  const listEl = document.getElementById('ig-list');
+  const html   = escapeHtml(classifyIntelError(text, isNetwork)).replace(/\n/g, '<br>');
+  listEl.innerHTML = `<div class="intel-error">${html}</div>`;
 }
 
 // The webhook/LLM node can hand back the report in several shapes:
@@ -1606,7 +1720,13 @@ async function sendChat(rawMessage) {
   } catch (err) {
     removeTypingIndicator();
     stopProcessingSound();
-    appendChatMsg('error', `ERROR: ${String(err.message || err).toUpperCase()}`);
+    const msg = String(err.message || err);
+    if (isExhaustedError(msg)) {
+      // Groq is the only direct API the chat calls → show its exhausted message in orange.
+      appendChatMsg('error', exhaustedMessage('groq'));
+    } else {
+      appendChatMsg('error', `ERROR: ${msg.toUpperCase()}`);
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = 'SEND';

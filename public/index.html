@@ -8,6 +8,44 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <style>
+    /* ── API KEY "how to get this" collapsible guides (setup screen) ── */
+    .key-guide { margin: 4px 0 0; }
+    .key-guide summary {
+      list-style: none;
+      cursor: pointer;
+      font-family: var(--font-mono, monospace);
+      font-size: 9px;
+      letter-spacing: 1px;
+      color: rgba(0, 229, 255, 0.45);
+      text-transform: uppercase;
+      user-select: none;
+      transition: color 0.2s;
+    }
+    .key-guide summary::-webkit-details-marker { display: none; }
+    .key-guide summary::marker { content: ''; }
+    .key-guide summary:hover { color: var(--cyan, #00e5ff); }
+    .key-guide[open] summary { color: rgba(0, 229, 255, 0.75); }
+    .key-guide ol {
+      margin: 6px 0 4px;
+      padding-left: 16px;
+      font-family: var(--font-mono, monospace);
+      font-size: 10px;
+      line-height: 1.65;
+      color: var(--text-dim, rgba(200, 230, 234, 0.4));
+    }
+    .key-guide li { margin-bottom: 1px; }
+    .key-guide .key-guide-tier {
+      font-family: var(--font-mono, monospace);
+      font-size: 9px;
+      letter-spacing: 0.5px;
+      color: rgba(0, 229, 255, 0.5);
+      margin-top: 2px;
+    }
+    /* Per-field required validation */
+    .form-input.field-error { border-color: #ff4444 !important; box-shadow: 0 0 6px rgba(255,68,68,0.3) !important; }
+    .field-error-msg { font-family: var(--font-mono, monospace); font-size: 9px; color: #ff4444; letter-spacing: 1px; margin-top: 3px; }
+  </style>
 </head>
 <body>
 
@@ -125,14 +163,61 @@
       <div class="form-group">
         <label class="form-label">GROQ API KEY</label>
         <input type="password" id="profile-groq" class="form-input" placeholder="gsk_..." />
+        <details class="key-guide">
+          <summary>How to get this key ▾</summary>
+          <ol>
+            <li>Go to console.groq.com</li>
+            <li>Sign up for a free account</li>
+            <li>Click "API Keys" in the left sidebar</li>
+            <li>Click "Create API Key"</li>
+            <li>Copy the key and paste it here</li>
+          </ol>
+          <div class="key-guide-tier">Free tier: ~14,400 requests/day</div>
+        </details>
       </div>
       <div class="form-group">
         <label class="form-label">TAVILY API KEY</label>
         <input type="password" id="profile-tavily" class="form-input" placeholder="tvly-..." />
+        <details class="key-guide">
+          <summary>How to get this key ▾</summary>
+          <ol>
+            <li>Go to tavily.com</li>
+            <li>Sign up for a free account</li>
+            <li>Go to your Dashboard</li>
+            <li>Copy your API key from the top of the page</li>
+            <li>Paste it here</li>
+          </ol>
+          <div class="key-guide-tier">Free tier: 1,000 searches/month</div>
+        </details>
       </div>
       <div class="form-group">
         <label class="form-label">APIFY TOKEN (INSTAGRAM SCRAPER)</label>
         <input type="password" id="profile-apify" class="form-input" placeholder="apify_api_..." />
+        <details class="key-guide">
+          <summary>How to get this key ▾</summary>
+          <ol>
+            <li>Go to apify.com and sign up free</li>
+            <li>Click your profile icon → Settings</li>
+            <li>Go to "Integrations" tab</li>
+            <li>Copy your Personal API Token</li>
+            <li>Paste it here</li>
+          </ol>
+          <div class="key-guide-tier">Free tier: ~$5 credits/month (resets monthly)</div>
+        </details>
+      </div>
+      <div class="form-group">
+        <label class="form-label">SCRAPINGBOT API KEY</label>
+        <input type="password" id="profile-scrapebot" class="form-input" placeholder="sb_..." />
+        <details class="key-guide">
+          <summary>How to get this key ▾</summary>
+          <ol>
+            <li>Go to scrapingbot.io and sign up free</li>
+            <li>After login, go to your Dashboard</li>
+            <li>Your API key is shown on the dashboard page</li>
+            <li>Copy and paste it here</li>
+          </ol>
+          <div class="key-guide-tier">Free tier: 100 credits (Instagram scraper backup when Apify runs out)</div>
+        </details>
       </div>
       <button class="btn-primary" id="btn-save-profile">INITIALIZE JARVIS</button>
       <div id="profile-error" class="error-msg"></div>
