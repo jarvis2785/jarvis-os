@@ -2163,6 +2163,11 @@ window.addEventListener('DOMContentLoaded', () => {
       target: '#btn-reconfigure',
       title: '// SYSTEM CONFIGURATION',
       description: "Look for the RECONFIGURE button in the top-right corner of your screen. Click it anytime to update your API keys or change your news topics. All your keys are stored locally on your device — never on any server."
+    },
+    {
+      target: '#btn-theme-toggle',
+      title: '// UI THEMES',
+      description: "JARVIS OS has two modes. JARVIS MODE is the current dark terminal interface — built for focus and speed. FOUNDER MODE is a clean, minimal light UI — professional and easy to read in any setting. Click the button anytime to switch between them instantly."
     }
   ];
 
@@ -2244,8 +2249,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ── Positioning ───────────────────────────────────────────────────────────
   function positionSpotlight(target) {
-    // RECONFIGURE sits behind the browser chrome — skip the glow ring, keep the overlay.
-    if (target.id === 'btn-reconfigure') {
+    // Top-bar buttons sit behind browser chrome — skip the glow ring, keep the overlay.
+    if (target.id === 'btn-reconfigure' || target.id === 'btn-theme-toggle') {
       els.spotlight.classList.add('no-hole');
       return;
     }
@@ -2261,16 +2266,25 @@ window.addEventListener('DOMContentLoaded', () => {
   function positionTooltip(target) {
     const tip = els.tooltip;
 
-    // Step 5 (RECONFIGURE, top-right corner): fixed position below the header bar,
-    // pinned right. Arrow CSS (::before on .ob-tooltip.step-reconfigure) points up.
+    // Steps 5 & 6 (top-bar buttons): fixed position below the header bar, pinned right.
+    // Arrow CSS (::before) points up toward the respective button.
     if (target.id === 'btn-reconfigure') {
+      tip.classList.remove('step-theme');
       tip.classList.add('step-reconfigure');
       tip.style.top = '180px';
       tip.style.right = '16px';
       tip.style.left = 'auto';
       return;
     }
-    tip.classList.remove('step-reconfigure');
+    if (target.id === 'btn-theme-toggle') {
+      tip.classList.remove('step-reconfigure');
+      tip.classList.add('step-theme');
+      tip.style.top = '180px';
+      tip.style.right = '16px';
+      tip.style.left = 'auto';
+      return;
+    }
+    tip.classList.remove('step-reconfigure', 'step-theme');
     tip.style.right = 'auto';   // reset for all other steps
 
     const tr = target.getBoundingClientRect();

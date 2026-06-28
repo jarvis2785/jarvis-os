@@ -120,6 +120,25 @@
       border-right: 7px solid transparent;
       border-bottom: 7px solid #0a0a0a;
     }
+    /* Upward arrow on Step 6 tooltip — points toward theme toggle (left of RECONFIGURE) */
+    .ob-tooltip.step-theme::before {
+      content: '';
+      position: absolute;
+      top: -8px;
+      right: 100px;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-bottom: 8px solid #00d4ff;
+    }
+    .ob-tooltip.step-theme::after {
+      content: '';
+      position: absolute;
+      top: -6px;
+      right: 101px;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 7px solid #0a0a0a;
+    }
     @media (max-width: 767px) { #onboarding-root { display: none !important; } }
   </style>
 </head>
