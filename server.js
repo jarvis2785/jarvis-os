@@ -412,6 +412,68 @@ app.post('/api/instagram-trends', async (req, res) => {
   }
 });
 
+// ── CALENDAR ITEMS ────────────────────────────────────────────────────────────
+
+async function getUserId(req) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return null;
+  const { data } = await supabase.auth.getUser(token);
+  return data?.user?.id || null;
+}
+
+app.get('/api/calendar', async (req, res) => {
+  const userId = await getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { data, error } = await supabase
+    .from('calendar_items')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: true, nullsFirst: false });
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ items: data });
+});
+
+app.post('/api/calendar', async (req, res) => {
+  const userId = await getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { title, date, time, type } = req.body;
+  if (!title) return res.status(400).json({ error: 'title required' });
+  const { data, error } = await supabase
+    .from('calendar_items')
+    .insert({ user_id: userId, title, date: date || null, time: time || null, type: type || 'task', completed: false })
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ item: data });
+});
+
+app.patch('/api/calendar/:id', async (req, res) => {
+  const userId = await getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { completed } = req.body;
+  const { data, error } = await supabase
+    .from('calendar_items')
+    .update({ completed })
+    .eq('id', req.params.id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ item: data });
+});
+
+app.delete('/api/calendar/:id', async (req, res) => {
+  const userId = await getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { error } = await supabase
+    .from('calendar_items')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('user_id', userId);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
 // ── START ─────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;

@@ -11,7 +11,9 @@ const STATE = {
   voiceEnabled: true,
   taskTimers: {},
   agendaTypeSelected: 'task',    // current type-toggle selection
-  agendaExpanded: false          // "show more" state
+  agendaExpanded: false,         // "show more" state
+  pendingCalendar: null,           // multi-turn calendar context { title, date, time, type, awaiting }
+  calSelectedDate: null            // date cell clicked on the calendar, filters agenda panel
 };
 
 // ── LOCALSTORAGE KEYS ─────────────────────────────────────────────────────────
@@ -614,6 +616,7 @@ async function loadNews(feedNum) {
       listEl.appendChild(a);
     });
     setNewsDotOnline();
+    return data.results;
   } catch (err) {
     const msg = String(err.message || err);
     if (isExhaustedError(msg)) {
@@ -661,7 +664,7 @@ function exhaustedMessage(service) {
 }
 
 // ── CONTENT INTELLIGENCE ──────────────────────────────────────────────────────
-const CONTENT_INTEL_WEBHOOK = 'https://423b-103-250-165-36.ngrok-free.app/webhook/content-intelligence';
+const CONTENT_INTEL_WEBHOOK = 'https://9b36-122-179-174-167.ngrok-free.app/webhook/content-intelligence';
 
 document.getElementById('btn-analyze').addEventListener('click', runContentIntelligence);
 ['ig-username-input', 'ig-limit-input', 'ig-groq-input'].forEach(id => {
@@ -800,6 +803,41 @@ function coerceReport(data) {
   return (data.report && typeof data.report === 'object') ? data.report : {};
 }
 
+function postIntelSummaryToChat(data) {
+  const posts    = Array.isArray(data.posts) ? data.posts : [];
+  const report   = coerceReport(data);
+  const top      = posts[0];
+  const username = document.getElementById('ig-username-input').value.trim() || 'account';
+  const lines    = [`// CONTENT INTELLIGENCE — @${username}`];
+
+  if (top) {
+    const caption = (top.caption || '(no caption)').slice(0, 80);
+    const views   = top.views ?? top.videoViewCount ?? top.videoPlayCount ?? top.playCount;
+    const likes   = top.likes ?? top.likesCount;
+    const stats   = [
+      views != null ? `${formatCount(views)} views` : '',
+      likes != null ? `${formatCount(likes)} likes` : ''
+    ].filter(Boolean).join(', ');
+    lines.push(`TOP POST: "${caption}"${stats ? ` — ${stats}` : ''}`);
+
+    const hook = report.topPerformingPosts?.[0]?.spokenHook || top.spokenHook || '';
+    if (hook) lines.push(`TOP HOOK: "${hook.slice(0, 100)}"`);
+  }
+
+  const summary = report.executiveSummary || '';
+  if (summary) lines.push(`KEY INSIGHT: ${summary.slice(0, 120)}`);
+
+  const ideas = Array.isArray(report.contentIdeas) ? report.contentIdeas : [];
+  const idea0 = ideas[0];
+  if (idea0) {
+    const action = idea0.title || idea0.name || idea0.idea || idea0.concept || '';
+    if (action) lines.push(`ACTION: ${action}`);
+  }
+
+  appendChatMsg('jarvis', lines.join('\n'));
+  speakText(`Content intelligence scan complete, sir.${summary ? ' ' + summary.slice(0, 80) : ''}`);
+}
+
 function renderIntelReport(data) {
   const listEl = document.getElementById('ig-list');
 
@@ -810,6 +848,8 @@ function renderIntelReport(data) {
 
   // Expose the latest report so the JARVIS chat terminal can query it.
   window.lastIntelReport = data;
+  // Post a chat summary once the panel finishes rendering.
+  setTimeout(() => postIntelSummaryToChat(data), 50);
 
   const posts    = Array.isArray(data.posts) ? data.posts : [];
   const stats    = data.stats || {};
@@ -1117,15 +1157,49 @@ function saveAgenda() {
   try { lsSet(LS.agenda(STATE.userId), JSON.stringify(STATE.agenda)); } catch {}
 }
 
+async function pushCalendarItem(item) {
+  try {
+    const res = await fetch('/api/calendar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${lsGet(LS.SESSION)}` },
+      body: JSON.stringify({ title: item.text, date: item.date, time: item.time, type: item.type })
+    });
+    if (res.ok) {
+      const { item: saved } = await res.json();
+      // Swap local temporary ID for the Supabase UUID so delete/toggle work correctly.
+      const local = STATE.agenda.find(a => a.id === item.id);
+      if (local) { local.id = saved.id; saveAgenda(); }
+    }
+  } catch {}
+}
+
 async function loadAgenda() {
   if (!STATE.userId) return;
   try {
+    const res = await fetch('/api/calendar', {
+      headers: { Authorization: `Bearer ${lsGet(LS.SESSION)}` }
+    });
+    if (res.ok) {
+      const { items } = await res.json();
+      STATE.agenda = (items || []).map(row => ({
+        id:         row.id,
+        user_id:    row.user_id,
+        text:       row.title,
+        date:       row.date   || null,
+        time:       row.time   || null,
+        done:       !!row.completed,
+        type:       row.type   || 'task',
+        created_at: row.created_at || new Date().toISOString()
+      }));
+      lsSet(LS.agenda(STATE.userId), JSON.stringify(STATE.agenda));
+    } else {
+      const raw = lsGet(LS.agenda(STATE.userId));
+      STATE.agenda = raw ? JSON.parse(raw) : [];
+    }
+  } catch {
     const raw = lsGet(LS.agenda(STATE.userId));
     STATE.agenda = raw ? JSON.parse(raw) : [];
-  } catch {
-    STATE.agenda = [];
   }
-  // Normalize legacy items
   STATE.agenda = STATE.agenda.map(row => ({ ...row, type: row.type || 'task' }));
   renderAgenda();
   renderCalendar();
@@ -1157,6 +1231,22 @@ function renderAgenda() {
   const list = document.getElementById('agenda-list');
   const showMoreBtn = document.getElementById('btn-show-more');
   list.innerHTML = '';
+
+  // ── Date-filter mode: a calendar cell is selected ──
+  if (STATE.calSelectedDate) {
+    const dateItems = STATE.agenda.filter(i => i.date === STATE.calSelectedDate).sort(agendaSort);
+    if (!dateItems.length) {
+      list.innerHTML = `<div class="agenda-empty">No items for ${formatEventDate(STATE.calSelectedDate)}.</div>`;
+    } else {
+      const header = document.createElement('div');
+      header.className = 'agenda-group-header';
+      header.innerHTML = `<span>${formatEventDate(STATE.calSelectedDate)}</span><span class="agenda-group-count">${dateItems.length}</span>`;
+      list.appendChild(header);
+      dateItems.forEach(item => list.appendChild(renderAgendaItem(item)));
+    }
+    if (showMoreBtn) showMoreBtn.style.display = 'none';
+    return;
+  }
 
   const todayItems    = [];
   const upcomingItems = [];
@@ -1259,6 +1349,11 @@ document.getElementById('agenda-list').addEventListener('click', (e) => {
     item.done = !item.done;
     saveAgenda();
     renderAgenda();
+    fetch(`/api/calendar/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${lsGet(LS.SESSION)}` },
+      body: JSON.stringify({ completed: item.done })
+    }).catch(() => {});
     return;
   }
 
@@ -1268,6 +1363,10 @@ document.getElementById('agenda-list').addEventListener('click', (e) => {
     saveAgenda();
     renderAgenda();
     renderCalendar();
+    fetch(`/api/calendar/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${lsGet(LS.SESSION)}` }
+    }).catch(() => {});
   }
 });
 
@@ -1300,6 +1399,7 @@ function addAgendaItem() {
   saveAgenda();
   renderAgenda();
   renderCalendar();
+  pushCalendarItem(item);
   document.getElementById('agenda-input').value = '';
   document.getElementById('agenda-date').value  = '';
   document.getElementById('agenda-time').value  = '';
@@ -1376,12 +1476,23 @@ function renderCalendar() {
     const hasEvent = agendaDates.has(dateStr);
 
     const day = document.createElement('div');
-    day.className = 'cal-day' + (isToday ? ' today' : '') + (hasEvent ? ' has-event' : '');
+    const isSelected = STATE.calSelectedDate === dateStr;
+    day.className = 'cal-day' +
+      (isToday    ? ' today'    : '') +
+      (hasEvent   ? ' has-event': '') +
+      (isSelected ? ' selected' : '');
     day.textContent = d;
     day.dataset.date = dateStr;
     day.addEventListener('click', () => {
-      document.getElementById('agenda-date').value = dateStr;
-      document.getElementById('agenda-input').focus();
+      if (STATE.calSelectedDate === dateStr) {
+        STATE.calSelectedDate = null;
+      } else {
+        STATE.calSelectedDate = dateStr;
+        document.getElementById('agenda-date').value = dateStr;
+        document.getElementById('agenda-input').focus();
+      }
+      renderCalendar();
+      renderAgenda();
     });
     grid.appendChild(day);
   }
@@ -1484,7 +1595,14 @@ function removeTypingIndicator() {
 // The terminal detects intent from natural language / voice and either operates
 // a dashboard panel directly or falls back to the Groq AI for open-ended queries.
 
-const JARVIS_SYSTEM_PROMPT = "You are JARVIS, the AI assistant inside JARVIS OS — a founder command center built by Shaan Soni. You are Tony Stark's JARVIS but for founders. You are sharp, direct, intelligent, occasionally witty. You address the user as 'sir'. You help with business strategy, content, AI systems, and productivity. Keep responses concise and actionable. Never be generic.";
+const JARVIS_SYSTEM_PROMPT = "You are JARVIS, the AI assistant inside JARVIS OS — a founder command center built by Shaan Soni. You are Tony Stark's JARVIS but for founders. You are sharp, direct, intelligent, occasionally witty. You address the user as 'sir'. You help with business strategy, content, AI systems, and productivity. Keep responses concise and actionable. Never be generic. You are NEVER to offer to send invites, prepare briefings, or contact people on the user's behalf. Never respond to calendar-related messages — those are handled separately by a dedicated system. If someone mentions a meeting, call, or schedule, say nothing about it.";
+
+function hasTimePassed(hhmmStr) {
+  if (!hhmmStr) return false;
+  const [h, min] = hhmmStr.split(':').map(Number);
+  const now = new Date();
+  return (h * 60 + min) <= (now.getHours() * 60 + now.getMinutes());
+}
 
 function parseTimeToHHMM(str) {
   const m = String(str).trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
@@ -1498,34 +1616,113 @@ function parseTimeToHHMM(str) {
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
+// ── CALENDAR NLU (Groq-powered) ───────────────────────────────────────────────
+
+async function parseCalendarNLU(raw) {
+  const key = lsGet(LS.GROQ);
+  if (!key) throw new Error('Groq key not configured — click RECONFIGURE.');
+
+  const systemPrompt = `Extract calendar info from the user message. Return ONLY this JSON, no other text: {"title":"event name only, no action words","date":"YYYY-MM-DD or null","time":"HH:MM or null"} Today is ${TODAY_STR()}.`;
+
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model: 'llama-3.1-8b-instant',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: raw }
+      ],
+      max_tokens: 100,
+      temperature: 0
+    })
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Groq API error');
+
+  const text  = (data.choices?.[0]?.message?.content || '').trim();
+  const first = text.indexOf('{');
+  const last  = text.lastIndexOf('}');
+  if (first === -1 || last === -1) return { title: null, date: null, time: null };
+  try {
+    const parsed = JSON.parse(text.slice(first, last + 1));
+    return { title: parsed.title || null, date: parsed.date || null, time: parsed.time || null };
+  } catch {
+    return { title: null, date: null, time: null };
+  }
+}
+
+// Fallback day-name resolver — used when Groq returns date:null but user said a weekday.
+// Handles misspellings like "fryday", "wednessday", etc. via prefix matching.
+function resolveLocalDate(raw) {
+  const m = raw.toLowerCase();
+  if (/\btoday\b|\btonight\b/.test(m)) return TODAY_STR();
+  if (/\btomorrow\b/.test(m)) {
+    const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0];
+  }
+  if (/\bday\s+after\s+tomorrow\b/.test(m)) {
+    const d = new Date(); d.setDate(d.getDate() + 2); return d.toISOString().split('T')[0];
+  }
+  const DAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  // Match any 3+ letter prefix of a day name, with optional suffix noise (e.g. "fryday")
+  const dayRe = /\b(sun|mon|tue|wed|thu|fri|sat)\w{0,6}\b/i;
+  const dm = m.match(dayRe);
+  if (dm) {
+    const prefix = dm[1].toLowerCase();
+    const target = DAYS.findIndex(d => d.startsWith(prefix));
+    if (target !== -1) {
+      const today = new Date();
+      let diff = target - today.getDay();
+      if (diff <= 0) diff += 7;
+      const d = new Date(today);
+      d.setDate(d.getDate() + diff);
+      return d.toISOString().split('T')[0];
+    }
+  }
+  return null;
+}
+
+function commitCalendarItem(title, date, time, type) {
+  if (!title || !title.trim()) return;
+  STATE.agendaTypeSelected = type || 'event';
+  document.querySelectorAll('.type-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.type === STATE.agendaTypeSelected));
+  document.getElementById('agenda-input').value = title;
+  document.getElementById('agenda-date').value  = date  || '';
+  document.getElementById('agenda-time').value  = time  || '';
+  addAgendaItem();
+  STATE.pendingCalendar = null;
+}
+
 function detectIntent(raw) {
   const m = raw.toLowerCase().trim();
 
-  // ── CALENDAR: add task / event / reminder ──
-  const addMatch = m.match(/\badd\s+(?:a\s+|an\s+)?(task|event|reminder|meeting)\b(.*)/);
-  if (addMatch || /^remind me to\b/.test(m)) {
-    let itemType = 'task';
-    let rest = '';
-    if (addMatch) {
-      itemType = (addMatch[1] === 'event' || addMatch[1] === 'meeting') ? 'event' : 'task';
-      rest = addMatch[2] || '';
-    } else {
-      rest = m.replace(/^remind me to\b/, '');
-    }
-    let time = '';
-    const timeMatch = rest.match(/\bat\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/);
-    if (timeMatch) {
-      time = parseTimeToHHMM(timeMatch[1]);
-      rest = rest.replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?/, '');
-    }
-    rest = rest.replace(/\b(today|tonight|tomorrow|please|now)\b/g, '');
-    let text = rest.replace(/^[\s:,\-]*(?:called|named|titled|to)?[\s:,\-]*/, '').replace(/\s{2,}/g, ' ').trim();
-    if (text) text = text.charAt(0).toUpperCase() + text.slice(1);
-    return { type: 'calendar-add', itemType, text, time };
+  // ── CALENDAR: add task / event / reminder (explicit command form) ──
+  if (/\badd\s+(?:a\s+|an\s+)?(?:task|event|reminder|meeting)\b/.test(m) ||
+      /^(?:remind me|create\s+(?:a\s+)?(?:task|event|reminder)|schedule\s+(?:a\s+|an\s+)?(?:call|meeting|event|sync|session|lunch|dinner|catch.?up|interview))\b/.test(m)) {
+    return { type: 'calendar-add' };
   }
 
-  // ── CALENDAR: query schedule (don't steal content questions) ──
-  const isContenty = /post|create|content|instagram|reel/.test(m);
+  // ── CALENDAR: natural language scheduling with time/date reference ──
+  const apptNoun = /\b(call|meeting|sync|review|pitch|catch.?up|lunch|dinner|coffee|interview|session|standup|demo|webinar|briefing)\b/;
+  const timeRef  = /\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b|\btomorrow\b|\bday\s+after\s+tomorrow\b|\bnext\s+(?:sun|mon|tue|wed|thu|fri|sat)\w*\b|\bon\s+(?:sun|mon|tue|wed|thu|fri|sat)\w*\b/i;
+  if (apptNoun.test(m) && timeRef.test(m) &&
+      !/post|create|content|instagram|reel|news/.test(m) &&
+      !/\b(analy[sz]e|content intelligence|run content)\b/.test(m)) {
+    return { type: 'calendar-add' };
+  }
+
+  // ── CALENDAR: bare "call with X" / "meeting with X" — no time ref needed ──
+  // Fires when message starts with or is entirely an appointment phrase (no question words).
+  if (/^(?:call|meeting|sync|catch\s*up|lunch|dinner|coffee|interview|standup|demo|pitch|briefing)\b/i.test(m) &&
+      !/^(?:what|how|when|where|did|can|will|could|should|would|tell|show|list|is|are|was|were|do|does)/.test(m) &&
+      !/post|create|content|instagram|reel|news|analy[sz]e/.test(m)) {
+    return { type: 'calendar-add' };
+  }
+
+  // ── CALENDAR: query schedule (don't steal content or news questions) ──
+  const isContenty = /post|create|content|instagram|reel|news/.test(m);
   if (!isContenty && (/\b(schedule|agenda)\b/.test(m) || /what do i have/.test(m) ||
       /\bwhat'?s\b.*\b(today|on (my )?(plate|schedule|agenda)|going on)\b/.test(m))) {
     return { type: 'calendar-query' };
@@ -1578,8 +1775,10 @@ async function handleNewsCmd(topic) {
   }
   const current = lsGet(LS.TOPIC1);
   if (!current) return 'No topic set, sir. Tell me what to pull — for example, "news about AI startups".';
-  loadNews(1);
-  return `Fetching intelligence on ${current}, sir.`;
+  const results = await loadNews(1);
+  if (!results?.length) return `Fetching intelligence on ${current}, sir.`;
+  const lines = results.map(r => `- ${r.title} — ${r.source}`).join('\n');
+  return `// NEWS INTELLIGENCE — ${current.toUpperCase()}\n${lines}`;
 }
 
 function handleAnalyzeCmd(username) {
@@ -1608,17 +1807,82 @@ function handleScheduleQuery() {
   return `Here is your agenda for today, sir:\n${lines.join('\n')}`;
 }
 
-function handleAddAgendaCmd(intent) {
-  if (!intent.text) return 'What would you like me to add, sir?';
-  document.getElementById('agenda-input').value = intent.text;
-  document.getElementById('agenda-date').value  = TODAY_STR();
-  document.getElementById('agenda-time').value  = intent.time || '';
-  STATE.agendaTypeSelected = intent.itemType;
-  document.querySelectorAll('.type-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.type === intent.itemType));
-  addAgendaItem();
-  const when = intent.time ? ` at ${intent.time}` : '';
-  return `Adding ${intent.itemType} "${intent.text}"${when} to your schedule, sir.`;
+async function handleCalendarAdd(raw, preParsed) {
+  const m = raw.toLowerCase();
+  const isTask = /\b(task|todo|to-do)\b/.test(m) ||
+    (/\bremind me to\b/.test(m) && !/\b(call|meeting|sync|pitch|lunch|dinner|coffee|interview|session|standup|demo|webinar|briefing)\b/.test(m));
+  const type = isTask ? 'task' : 'event';
+
+  const { title, date: groqDate, time } = preParsed || (await parseCalendarNLU(raw));
+  const date = groqDate || resolveLocalDate(raw);
+  console.log('CALENDAR DEBUG - title:', title, 'date:', date, 'time:', time);
+
+  if (!title) {
+    STATE.pendingCalendar = { title: null, date, time, type, awaiting: 'what' };
+    return "I didn't catch that, sir. What would you like to schedule?";
+  }
+
+  if (date && time) {
+    if (date === TODAY_STR() && hasTimePassed(time)) {
+      STATE.pendingCalendar = { title, date: null, time, type, awaiting: 'confirm-tomorrow' };
+      return `Sir, ${time} has already passed today — did you mean tomorrow?`;
+    }
+    commitCalendarItem(title, date, time, type);
+    return `Done sir, "${title}" added for ${formatEventDate(date)} at ${time}.`;
+  }
+
+  if (!date && time) {
+    STATE.pendingCalendar = { title, date: null, time, type, awaiting: 'date' };
+    return `Sure sir, ${title} at ${time} — is that for today or tomorrow?`;
+  }
+
+  if (date && !time) {
+    STATE.pendingCalendar = { title, date, time: null, type, awaiting: 'time' };
+    return `Got it sir, what time for ${title} on ${formatEventDate(date)}?`;
+  }
+
+  STATE.pendingCalendar = { title, date: null, time: null, type, awaiting: 'both' };
+  return `I'll add that sir — what date and time for ${title}?`;
+}
+
+async function handleCalendarFollowUp(message) {
+  const pending = STATE.pendingCalendar;
+
+  if (pending.awaiting === 'confirm-tomorrow') {
+    if (/^\s*(yes|yeah|yep|sure|ok|okay|tomorrow)\s*$/i.test(message)) {
+      commitCalendarItem(pending.title, (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0]; })(), pending.time, pending.type);
+      return `Done sir, "${pending.title}" added for tomorrow at ${pending.time}.`;
+    }
+    STATE.pendingCalendar = null;
+    return null;
+  }
+
+  const parsed = await parseCalendarNLU(message);
+  const date = parsed.date || resolveLocalDate(message) || pending.date || null;
+  const time = parsed.time || pending.time || null;
+
+  if (!date && !time) return null;
+
+  if (date && time) {
+    if (date === TODAY_STR() && hasTimePassed(time)) {
+      STATE.pendingCalendar = { ...pending, date: null, time, awaiting: 'confirm-tomorrow' };
+      return `Sir, ${time} has already passed today — did you mean tomorrow?`;
+    }
+    commitCalendarItem(pending.title, date, time, pending.type);
+    return `Done sir, "${pending.title}" added for ${formatEventDate(date)} at ${time}.`;
+  }
+
+  if (!date && time) {
+    STATE.pendingCalendar = { ...pending, time, awaiting: 'date' };
+    return `Sure sir, ${pending.title} at ${time} — is that for today or tomorrow?`;
+  }
+
+  if (date && !time) {
+    STATE.pendingCalendar = { ...pending, date, awaiting: 'time' };
+    return `Got it sir, what time for ${pending.title} on ${formatEventDate(date)}?`;
+  }
+
+  return null;
 }
 
 function handleTopPost() {
@@ -1698,17 +1962,38 @@ async function sendChat(rawMessage) {
   showTypingIndicator();
 
   try {
-    const intent = detectIntent(message);
     let reply;
-    switch (intent.type) {
-      case 'news':               reply = await handleNewsCmd(intent.topic); break;
-      case 'content-analyze':    reply = handleAnalyzeCmd(intent.username);  break;
-      case 'calendar-query':     reply = handleScheduleQuery();              break;
-      case 'calendar-add':       reply = handleAddAgendaCmd(intent);         break;
-      case 'report-toppost':     reply = handleTopPost();                    break;
-      case 'report-ideas':       reply = handleContentIdeas();               break;
-      case 'report-whattopost':  reply = handleWhatToPost();                 break;
-      default:                   reply = await callGroqDirect(message);
+
+    // Pending calendar context: try to complete the entry with this reply.
+    if (STATE.pendingCalendar) {
+      const fu = await handleCalendarFollowUp(message);
+      if (fu != null) reply = fu;
+      else STATE.pendingCalendar = null; // couldn't parse — fall through to normal detection
+    }
+
+    if (reply == null) {
+      // Pre-check: ask Groq if this message contains a calendar title.
+      // If it does, route straight to calendar handling — no detectIntent needed.
+      // Pass the pre-parsed result into handleCalendarAdd to avoid a second Groq call.
+      let calPreCheck = null;
+      try { calPreCheck = await parseCalendarNLU(message); } catch { /* fall through */ }
+
+      if (calPreCheck?.title) {
+        reply = await handleCalendarAdd(message, calPreCheck);
+      } else {
+        // No calendar title detected — run keyword-based intent routing.
+        const intent = detectIntent(message);
+        switch (intent.type) {
+          case 'news':               reply = await handleNewsCmd(intent.topic); break;
+          case 'content-analyze':    reply = handleAnalyzeCmd(intent.username);  break;
+          case 'calendar-query':     reply = handleScheduleQuery();              break;
+          case 'calendar-add':       reply = await handleCalendarAdd(message);   break;
+          case 'report-toppost':     reply = handleTopPost();                    break;
+          case 'report-ideas':       reply = handleContentIdeas();               break;
+          case 'report-whattopost':  reply = handleWhatToPost();                 break;
+          default:                   reply = await callGroqDirect(message);
+        }
+      }
     }
 
     removeTypingIndicator();
