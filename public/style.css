@@ -1484,3 +1484,191 @@ html, body {
   #dashboard-header { flex-direction: column; gap: 8px; text-align: center; }
   .header-right { text-align: center; }
 }
+
+/* Status-bar right group: keeps the theme toggle + RECONFIGURE together on the right */
+.status-bar-right { display: flex; align-items: center; gap: 10px; }
+
+/* ── PART 1: RECONFIGURE highlight pulse (fires for 3s after the tour ends) ──── */
+@keyframes reconfigurePulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+.reconfigure-highlight {
+  animation: reconfigurePulse 0.8s ease-in-out 3;
+  box-shadow: 0 0 20px #00d4ff;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   FOUNDER MODE — clean, light, professional theme.
+   Toggled via the `founder-mode` class on <html>/<body>. Overrides the JARVIS
+   terminal aesthetic. Most colours/fonts flip automatically by re-pointing the
+   design-system CSS variables; the rules below cover what variables can't reach
+   (glows, uppercasing, terminal decorations, component specifics).
+   ════════════════════════════════════════════════════════════════════════════ */
+.founder-mode {
+  --bg: #f8f9fa;
+  --cyan: #2563eb;
+  --cyan-dim: rgba(37, 99, 235, 0.08);
+  --cyan-border: #e5e7eb;
+  --cyan-glow: none;
+  --green: #22c55e;
+  --green-dim: rgba(34, 197, 94, 0.12);
+  --red: #ef4444;
+  --text: #111827;
+  --text-dim: #6b7280;
+  --panel-bg: #ffffff;
+  --font-mono: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  --font-orb:  -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+}
+
+/* Base surfaces */
+html.founder-mode, .founder-mode body { background: #f8f9fa; color: #111827; }
+.founder-mode #screen-dashboard, .founder-mode #main-grid { background: #f8f9fa; }
+.founder-mode .scanlines { display: none; }          /* drop terminal scanline overlay */
+.founder-mode .panel-corner { display: none; }       /* drop ┌┐└┘ bracket decorations */
+
+.founder-mode .panel {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.founder-mode .panel:hover { border-color: #d1d5db; }
+
+/* Header + status bar */
+.founder-mode #dashboard-header {
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  backdrop-filter: none;
+}
+.founder-mode #status-bar { background: #ffffff; border-bottom: 1px solid #e5e7eb; }
+.founder-mode .logo-text { color: #111827; text-shadow: none; }
+.founder-mode .clock-text { color: #2563eb; text-shadow: none; }
+.founder-mode #greeting-text { color: #111827; }
+
+/* Strip uppercasing + wide tracking from labels/titles for a clean editorial look */
+.founder-mode .panel-title,
+.founder-mode .panel-header,
+.founder-mode .status-label,
+.founder-mode .form-label,
+.founder-mode .logo-sub,
+.founder-mode .header-niche,
+.founder-mode #greeting-text,
+.founder-mode .date-text,
+.founder-mode .auth-subtitle,
+.founder-mode .cal-month-label,
+.founder-mode .intel-label,
+.founder-mode .intel-metric-label,
+.founder-mode .intel-sublabel,
+.founder-mode .intel-sublabel-cyan,
+.founder-mode .intel-spoken-label,
+.founder-mode .intel-post-tag,
+.founder-mode .loading-text,
+.founder-mode .btn-primary,
+.founder-mode .btn-ghost,
+.founder-mode .auth-tab,
+.founder-mode .type-btn,
+.founder-mode .pw-toggle,
+.founder-mode .form-input {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Panel titles → clean headings */
+.founder-mode .panel-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;
+}
+.founder-mode .panel-header { color: #111827; font-weight: 600; }
+
+/* Kill remaining hard-coded glows */
+.founder-mode .logo-text,
+.founder-mode .clock-text,
+.founder-mode #greeting-text,
+.founder-mode .intel-metric-value,
+.founder-mode .chat-msg.jarvis .chat-prefix,
+.founder-mode .chat-msg.error,
+.founder-mode .auth-tab.active { text-shadow: none; }
+
+/* Status dots → flat filled circles, no pulse */
+.founder-mode .status-dot { background: #d1d5db; box-shadow: none; }
+.founder-mode .status-dot.online { background: #22c55e; box-shadow: none; animation: none; }
+
+/* Buttons → solid blue primary, clean ghost */
+.founder-mode .btn-primary,
+.founder-mode .ig-scrape-btn {
+  background: #2563eb;
+  color: #ffffff;
+  border: 1px solid #2563eb;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.founder-mode .btn-primary:hover,
+.founder-mode .ig-scrape-btn:hover { background: #1d4ed8; box-shadow: none; }
+.founder-mode .btn-ghost {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  color: #374151;
+  border-radius: 6px;
+}
+.founder-mode .btn-ghost:hover { border-color: #2563eb; color: #2563eb; background: #f9fafb; }
+.founder-mode .btn-icon {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  color: #2563eb;
+  border-radius: 6px;
+}
+.founder-mode .btn-icon:hover { background: #eff6ff; box-shadow: none; border-color: #2563eb; }
+
+/* Inputs → standard form fields */
+.founder-mode .form-input {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #111827;
+  caret-color: #2563eb;
+}
+.founder-mode .form-input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
+.founder-mode .form-input::placeholder { color: #9ca3af; }
+.founder-mode .intel-input-key { letter-spacing: normal; }
+
+/* JARVIS chat terminal */
+.founder-mode #chat-panel { background: #ffffff; border: 1px solid #e5e7eb; }
+.founder-mode .chat-msg.jarvis { color: #2563eb; }
+.founder-mode .chat-msg.jarvis .chat-prefix { color: #2563eb; font-weight: 600; }
+.founder-mode .chat-msg.user { color: #111827; }
+.founder-mode .chat-msg.user::before { content: 'You'; color: #6b7280; }
+.founder-mode .chat-msg.error { color: #ef4444; }
+
+/* Calendar */
+.founder-mode .cal-day { color: #374151; border-radius: 4px; }
+.founder-mode .cal-day:hover { background: #f3f4f6; border-color: #e5e7eb; }
+.founder-mode .cal-day.today { color: #2563eb; border-color: #2563eb; box-shadow: none; }
+.founder-mode .cal-day.selected { background: #2563eb; color: #ffffff; border-color: #2563eb; box-shadow: none; }
+.founder-mode .cal-day.has-event::after { color: #22c55e; }
+
+/* News feed */
+.founder-mode .news-item:hover { background: #f3f4f6; border-left-color: #2563eb; box-shadow: none; }
+.founder-mode .news-source { color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px; }
+.founder-mode .news-headline { color: #111827; font-weight: 500; }
+.founder-mode .news-date { color: #9ca3af; font-size: 12px; }
+
+/* Content Intelligence */
+.founder-mode .intel-metric {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.founder-mode .intel-metric::before { display: none; }
+.founder-mode .intel-metric-value { color: #2563eb; text-shadow: none; }
+.founder-mode .intel-bar-track { background: #f3f4f6; border: 1px solid #e5e7eb; }
+.founder-mode .intel-bar-fill { background: #2563eb; border-right: none; box-shadow: none; }
+.founder-mode .intel-bar-score { color: #111827; }
+.founder-mode .intel-post-block { border-color: #e5e7eb; }
+.founder-mode .ig-item:hover { box-shadow: none; }
+
+/* Theme toggle hex marker keeps the accent colour in both modes */
+.founder-mode #btn-theme-toggle { color: #2563eb; border-color: #bfdbfe; }

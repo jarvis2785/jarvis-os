@@ -26,6 +26,7 @@ const LS = {
   APIFY:    'jarvis_apify',
   SCRAPEBOT:       'jarvis_scrapebot',
   CONFIG_COMPLETE: 'jarvis_config_complete',
+  THEME:    'jarvis_theme',
   agenda:          uid => `jarvis_agenda_${uid}`,
   chat:     uid => `jarvis_chat_${uid}`
 };
@@ -2127,3 +2128,368 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.target.id === 'init-overlay' || e.target.id === 'init-content') dismissInitOverlay();
   });
 });
+
+// ── FIRST-TIME ONBOARDING SPOTLIGHT TOUR ──────────────────────────────────────
+// Self-contained module. Hooks into the app non-invasively:
+//   • A MutationObserver watches #screen-dashboard for the `active` class, so the
+//     tour auto-checks after every dashboard entry (no existing function touched).
+//   • Capture-phase listeners on document intercept "help" / "show tutorial" in the
+//     chat terminal BEFORE sendChat runs, so they replay the tour instead of querying.
+// Completion is tracked in Supabase (profiles.onboarding_complete) via /api/onboarding,
+// NOT localStorage — so it persists across devices and sessions.
+(function () {
+  const STEPS = [
+    {
+      target: '#news-panel-1',
+      title: '// NEWS FEED',
+      description: "Your live industry intelligence. JARVIS fetches the latest news based on your niche automatically. Click the refresh icon to update anytime."
+    },
+    {
+      target: '#ig-panel',
+      title: '// CONTENT INTELLIGENCE',
+      description: "Enter any Instagram username and click ANALYZE. JARVIS scrapes their top reels, scores them by engagement, and generates a full AI report on what's working and what to post next."
+    },
+    {
+      target: '.right-column',
+      title: '// CALENDAR & AGENDA',
+      description: "Your personal schedule. Add tasks and events manually or just tell JARVIS in the chat terminal. Your schedule persists across sessions — never disappears on logout."
+    },
+    {
+      target: '#chat-panel',
+      title: '// JARVIS TERMINAL',
+      description: "Your command center. Control everything using natural language. Fetch news, analyze Instagram accounts, manage your calendar, or ask JARVIS anything about your business. Voice input is active — click VOICE ON to speak."
+    },
+    {
+      target: '#btn-reconfigure',
+      title: '// SYSTEM CONFIGURATION',
+      description: "Look for the RECONFIGURE button in the top-right corner of your screen. Click it anytime to update your API keys or change your news topics. All your keys are stored locally on your device — never on any server."
+    }
+  ];
+
+  const WELCOME_MSG = 'JARVIS online, sir. Type "help" anytime to replay this tour.';
+  const PAD = 8;           // spotlight padding around the target rect
+  const FADE_MS = 300;     // matches CSS transition duration
+
+  let active = false;      // a tour is currently on screen
+  let stepIndex = 0;
+  let els = null;          // { root, overlay, spotlight, tooltip, counter, title, desc, next, skip }
+
+  // ── Supabase-backed completion flag (via server, using the real access token) ──
+  function authHeaders() {
+    const s = getSavedSession();
+    return s?.accessToken ? { Authorization: `Bearer ${s.accessToken}` } : null;
+  }
+
+  async function isOnboardingComplete() {
+    const headers = authHeaders();
+    if (!headers) return true; // no session → never nag
+    try {
+      const res = await fetch('/api/onboarding', { headers });
+      if (!res.ok) return true; // on any error, don't show the tour
+      const data = await res.json();
+      return !!data.onboarding_complete;
+    } catch { return true; }
+  }
+
+  async function markComplete() {
+    const headers = authHeaders();
+    if (!headers) return;
+    try {
+      await fetch('/api/onboarding/complete', { method: 'POST', headers });
+    } catch { /* best-effort; flag will retry next entry if it failed */ }
+  }
+
+  // ── DOM scaffold ──────────────────────────────────────────────────────────
+  function buildDom() {
+    const root = document.getElementById('onboarding-root');
+    root.innerHTML = `
+      <div class="ob-overlay"></div>
+      <div class="ob-spotlight"></div>
+      <button class="ob-skip" type="button">SKIP TOUR ✕</button>
+      <div class="ob-tooltip">
+        <div class="ob-counter"></div>
+        <div class="ob-title"></div>
+        <div class="ob-desc"></div>
+        <div class="ob-actions"><button class="ob-next" type="button">NEXT ▸</button></div>
+      </div>`;
+    els = {
+      root,
+      overlay:   root.querySelector('.ob-overlay'),
+      spotlight: root.querySelector('.ob-spotlight'),
+      tooltip:   root.querySelector('.ob-tooltip'),
+      counter:   root.querySelector('.ob-counter'),
+      title:     root.querySelector('.ob-title'),
+      desc:      root.querySelector('.ob-desc'),
+      next:      root.querySelector('.ob-next'),
+      skip:      root.querySelector('.ob-skip')
+    };
+    els.next.addEventListener('click', onNext);
+    els.skip.addEventListener('click', () => endTour());
+    window.addEventListener('resize', onResize);
+    window.addEventListener('keydown', onKeydown, true);
+    root.classList.add('active');
+    root.setAttribute('aria-hidden', 'false');
+  }
+
+  function teardownDom() {
+    window.removeEventListener('resize', onResize);
+    window.removeEventListener('keydown', onKeydown, true);
+    if (els?.root) {
+      els.root.classList.remove('active');
+      els.root.setAttribute('aria-hidden', 'true');
+      els.root.innerHTML = '';
+    }
+    els = null;
+  }
+
+  // ── Positioning ───────────────────────────────────────────────────────────
+  function positionSpotlight(target) {
+    // RECONFIGURE sits behind the browser chrome — skip the glow ring, keep the overlay.
+    if (target.id === 'btn-reconfigure') {
+      els.spotlight.classList.add('no-hole');
+      return;
+    }
+    els.spotlight.classList.remove('no-hole');
+    const r = target.getBoundingClientRect();
+    els.spotlight.style.top    = `${r.top - PAD}px`;
+    els.spotlight.style.left   = `${r.left - PAD}px`;
+    els.spotlight.style.width  = `${r.width + PAD * 2}px`;
+    els.spotlight.style.height = `${r.height + PAD * 2}px`;
+  }
+
+  // Place the tooltip near the target: below → above → left → centered.
+  function positionTooltip(target) {
+    const tip = els.tooltip;
+
+    // Step 5 (RECONFIGURE, top-right corner): fixed position below the header bar,
+    // pinned right. Arrow CSS (::before on .ob-tooltip.step-reconfigure) points up.
+    if (target.id === 'btn-reconfigure') {
+      tip.classList.add('step-reconfigure');
+      tip.style.top = '180px';
+      tip.style.right = '16px';
+      tip.style.left = 'auto';
+      return;
+    }
+    tip.classList.remove('step-reconfigure');
+    tip.style.right = 'auto';   // reset for all other steps
+
+    const tr = target.getBoundingClientRect();
+    const tw = tip.offsetWidth || 320;     // fixed 320px width; measured in place
+    const th = tip.offsetHeight || 180;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const gap = 16, m = 12;
+    let top, left;
+
+    // Top-right targets (e.g. RECONFIGURE): keep the tooltip to the LEFT so it
+    // never sits on top of the highlighted button. Triggered when the target's
+    // right edge is within 400px of the viewport's right edge.
+    if (vw - tr.right < 400 && tr.left - gap - tw >= m) {
+      left = tr.left - gap - tw;             // beside the target, on its left
+      top = tr.top;                          // aligned with the target's top edge
+    } else if (tr.bottom + gap + th <= vh) {    // below
+      top = tr.bottom + gap;
+      left = tr.left;
+    } else if (tr.top - gap - th >= 0) {         // above
+      top = tr.top - gap - th;
+      left = tr.left;
+    } else if (tr.left - gap - tw >= 0) {        // left, vertically centered
+      left = tr.left - gap - tw;
+      top = tr.top + tr.height / 2 - th / 2;
+    } else if (tr.right + gap + tw <= vw) {      // right, vertically centered
+      left = tr.right + gap;
+      top = tr.top + tr.height / 2 - th / 2;
+    } else {                                     // fallback: centered
+      left = (vw - tw) / 2;
+      top = (vh - th) / 2;
+    }
+    // Clamp inside the viewport.
+    left = Math.max(m, Math.min(left, vw - tw - m));
+    top  = Math.max(m, Math.min(top, vh - th - m));
+    tip.style.top = `${top}px`;
+    tip.style.left = `${left}px`;
+  }
+
+  function renderStep(i) {
+    const step = STEPS[i];
+    const target = document.querySelector(step.target);
+    if (!target) { endTour(); return; }
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    positionSpotlight(target);
+    els.counter.textContent = `STEP ${i + 1} OF ${STEPS.length}`;
+    els.title.textContent = step.title;
+    els.desc.textContent = step.description;
+    els.next.textContent = (i === STEPS.length - 1) ? 'FINISH ▸' : 'NEXT ▸';
+    positionTooltip(target);
+  }
+
+  function onResize() {
+    if (!active || !els) return;
+    if (els.tooltip.style.display === 'none') return; // completion card up
+    renderStep(stepIndex);
+  }
+
+  function onKeydown(e) {
+    if (!active) return;
+    if (e.key === 'Escape') { e.preventDefault(); endTour(); }
+  }
+
+  // ── Step flow ─────────────────────────────────────────────────────────────
+  function goToStep(i) {
+    stepIndex = i;
+    // Glide the spotlight immediately; fade the tooltip out then in with new text.
+    const target = document.querySelector(STEPS[i].target);
+    if (target) positionSpotlight(target);
+    els.tooltip.classList.add('ob-fade');
+    setTimeout(() => {
+      renderStep(i);
+      els.tooltip.classList.remove('ob-fade');
+    }, FADE_MS);
+  }
+
+  function onNext() {
+    if (stepIndex < STEPS.length - 1) {
+      goToStep(stepIndex + 1);
+    } else {
+      showCompletionCard();
+    }
+  }
+
+  function showCompletionCard() {
+    // Full dim, no spotlight hole, hide tooltip + skip, show centered card.
+    els.tooltip.style.display = 'none';
+    els.skip.style.display = 'none';
+    els.spotlight.classList.add('no-hole');
+    const card = document.createElement('div');
+    card.className = 'ob-complete-card';
+    card.innerHTML = `
+      <div class="ob-complete-title">JARVIS ONLINE</div>
+      <div class="ob-complete-sub">All systems operational, sir.</div>
+      <div class="ob-complete-desc">You're all set. Your command center is ready.</div>
+      <button class="ob-engage" type="button">ENGAGE</button>`;
+    els.root.appendChild(card);
+    card.querySelector('.ob-engage').addEventListener('click', () => endTour());
+  }
+
+  // ── Entry / exit ──────────────────────────────────────────────────────────
+  function startSpotlightTour() {
+    if (active) return;
+    active = true;
+    stepIndex = 0;
+    buildDom();
+    // First paint after layout settles so rects are accurate.
+    requestAnimationFrame(() => requestAnimationFrame(() => renderStep(0)));
+  }
+
+  // Called on ENGAGE or SKIP (and Escape). Marks complete + greets in the terminal.
+  function endTour() {
+    if (!active) return;
+    active = false;
+    teardownDom();
+    markComplete();
+    try { appendChatMsg('jarvis', WELCOME_MSG); } catch {}
+    // Draw the user's eye to RECONFIGURE for 3 seconds once the tour closes.
+    const rc = document.getElementById('btn-reconfigure');
+    if (rc) {
+      rc.classList.add('reconfigure-highlight');
+      setTimeout(() => rc.classList.remove('reconfigure-highlight'), 3000);
+    }
+  }
+
+  // Decide whether to run: respects the Supabase flag unless forced (help command).
+  async function maybeStartOnboarding(force) {
+    if (active) return;
+    if (!force) {
+      const done = await isOnboardingComplete();
+      if (done) return;
+    }
+    // Mobile: skip the spotlight entirely — just greet and persist completion.
+    if (window.innerWidth < 768) {
+      await markComplete();
+      try { appendChatMsg('jarvis', WELCOME_MSG); } catch {}
+      return;
+    }
+    startSpotlightTour();
+  }
+
+  // ── Auto-trigger: watch the dashboard screen becoming active ───────────────
+  function watchDashboard() {
+    const dash = document.getElementById('screen-dashboard');
+    if (!dash) return;
+    let wasActive = dash.classList.contains('active');
+    const obs = new MutationObserver(() => {
+      const isActive = dash.classList.contains('active');
+      if (isActive && !wasActive) {
+        wasActive = true;
+        maybeStartOnboarding(false);
+      } else if (!isActive) {
+        wasActive = false;
+      }
+    });
+    obs.observe(dash, { attributes: true, attributeFilter: ['class'] });
+    if (wasActive) maybeStartOnboarding(false); // already on the dashboard at load
+  }
+
+  // ── "help" / "show tutorial" interception (capture phase → beats sendChat) ──
+  function isTourCommand(v) {
+    const s = (v || '').trim().toLowerCase();
+    return s === 'help' || s === 'show tutorial';
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target && e.target.id === 'chat-input' && e.key === 'Enter' && isTourCommand(e.target.value)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      e.target.value = '';
+      maybeStartOnboarding(true);
+    }
+  }, true);
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest && e.target.closest('#btn-send-chat');
+    if (!btn) return;
+    const input = document.getElementById('chat-input');
+    if (input && isTourCommand(input.value)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      input.value = '';
+      maybeStartOnboarding(true);
+    }
+  }, true);
+
+  watchDashboard();
+})();
+
+// ── UI THEME SWITCHER (JARVIS ⇄ Founder Mode) ─────────────────────────────────
+// Founder Mode is a clean light theme applied via the `founder-mode` class. The
+// preference lives in localStorage ('jarvis_theme') and is also applied pre-paint
+// by a tiny inline script in index.html <head> to avoid a flash of the wrong theme.
+(function () {
+  function currentTheme() { return lsGet(LS.THEME) === 'founder' ? 'founder' : 'jarvis'; }
+
+  function applyTheme(theme) {
+    const founder = theme === 'founder';
+    document.documentElement.classList.toggle('founder-mode', founder);
+    document.body.classList.toggle('founder-mode', founder);
+    const btn = document.getElementById('btn-theme-toggle');
+    // Label shows the mode you'll switch TO.
+    if (btn) btn.textContent = founder ? '⬡ JARVIS MODE' : '⬡ FOUNDER MODE';
+  }
+
+  function toggleTheme() {
+    const next = currentTheme() === 'founder' ? 'jarvis' : 'founder';
+    lsSet(LS.THEME, next);
+    applyTheme(next);
+  }
+
+  // Apply saved theme + wire the toggle as soon as the DOM is ready.
+  function init() {
+    applyTheme(currentTheme());
+    const btn = document.getElementById('btn-theme-toggle');
+    if (btn) btn.addEventListener('click', toggleTheme);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

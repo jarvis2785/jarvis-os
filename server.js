@@ -474,6 +474,33 @@ app.delete('/api/calendar/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+// ── ONBOARDING (first-time tour completion flag on profiles) ──────────────────
+// Reads/writes profiles.onboarding_complete for the authenticated user.
+// Kept as dedicated routes so the existing /api/profile selects stay untouched.
+
+app.get('/api/onboarding', async (req, res) => {
+  const userId = await getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('onboarding_complete')
+    .eq('id', userId)
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ onboarding_complete: !!data?.onboarding_complete });
+});
+
+app.post('/api/onboarding/complete', async (req, res) => {
+  const userId = await getUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  const { error } = await supabase
+    .from('profiles')
+    .update({ onboarding_complete: true })
+    .eq('id', userId);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
 // ── START ─────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
