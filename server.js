@@ -4,6 +4,7 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
+const ws = require('ws');
 
 const app = express();
 app.use(cors());
@@ -12,7 +13,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_ANON_KEY,
+  {
+    realtime: { transport: ws }
+  }
 );
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────

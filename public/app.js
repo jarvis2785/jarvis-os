@@ -665,7 +665,7 @@ function exhaustedMessage(service) {
 }
 
 // ── CONTENT INTELLIGENCE ──────────────────────────────────────────────────────
-const CONTENT_INTEL_WEBHOOK = 'https://9b36-122-179-174-167.ngrok-free.app/webhook/content-intelligence';
+const CONTENT_INTEL_WEBHOOK = 'https://bb96-103-250-166-221.ngrok-free.app/webhook/content-intelligence';
 
 document.getElementById('btn-analyze').addEventListener('click', runContentIntelligence);
 ['ig-username-input', 'ig-limit-input', 'ig-groq-input'].forEach(id => {
